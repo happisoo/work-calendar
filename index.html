@@ -1,0 +1,4373 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>업무 캘린더</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>" />
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+<style>
+  body { margin: 0; background: #f1f5f9; }
+  #boot { padding: 24px; font-family: sans-serif; color: #475569; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">캘린더를 불러오는 중입니다...</div></div>
+
+<!-- Firebase 연결 (구글 로그인 + Firestore) -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCXnY0L2NwkHpRypXIBOQLOnaf-10fZ6bs",
+  authDomain: "soo-work-calendar-s77-1.firebaseapp.com",
+  projectId: "soo-work-calendar-s77-1",
+  storageBucket: "soo-work-calendar-s77-1.firebasestorage.app",
+  messagingSenderId: "823997085648",
+  appId: "1:823997085648:web:9839738eaff58ac3be6bd5",
+  measurementId: "G-L4BM95CS6T"
+};
+
+try {
+  const app = initializeApp(firebaseConfig);
+  window.FB = {
+    auth: getAuth(app),
+    db: getFirestore(app),
+    GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+    doc, setDoc, onSnapshot
+  };
+} catch (e) {
+  console.error('Firebase 초기화 실패', e);
+}
+</script>
+
+<script type="text/babel">
+const { useState, useMemo, useEffect, useRef, useCallback } = React;
+const FB = window.FB || null;
+
+// ============================================================================
+// 1. 내장 SVG 아이콘
+// ============================================================================
+const ICON_DEFS = {
+  calendar: [2, '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
+  chevronLeft: [2, '<polyline points="15 18 9 12 15 6"/>'],
+  chevronRight: [2, '<polyline points="9 18 15 12 9 6"/>'],
+  plus: [2.2, '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'],
+  check: [2.8, '<polyline points="20 6 9 17 4 12"/>'],
+  trash: [2, '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'],
+  search: [2, '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'],
+  copy: [2, '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'],
+  clipboard: [2, '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>'],
+  repeat: [2, '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'],
+  expand: [2, '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>'],
+  compress: [2, '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>'],
+  x: [2, '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'],
+  layers: [2, '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>'],
+  grid: [2, '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>'],
+  calendarRange: [2, '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/>'],
+  checkSquare: [2, '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'],
+  edit: [2, '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'],
+  arrowUp: [2.2, '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>'],
+  tag: [2, '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>'],
+  download: [2, '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'],
+  upload: [2, '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>'],
+  refresh: [2, '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>'],
+  folder: [2, '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'],
+  checkCircle: [2.2, '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'],
+  fileText: [2, '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>'],
+  filter: [2, '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
+  copyPlus: [2, '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/><line x1="15.5" y1="12.5" x2="15.5" y2="18.5"/><line x1="12.5" y1="15.5" x2="18.5" y2="15.5"/>']
+};
+
+const Icon = ({ name, className = 'w-4 h-4' }) => {
+  const def = ICON_DEFS[name];
+  if (!def) return null;
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={def[0]}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: def[1] }}
+    />
+  );
+};
+
+// ============================================================================
+// 2. 전체 연도(2020~2040) 대한민국 법정·음력·대체공휴일 자동 산출 로직
+// ============================================================================
+const YEAR_OPTIONS = Array.from({ length: 21 }, (_, idx) => 2020 + idx);
+
+const LUNAR_HOLIDAY_ANCHORS = {
+  2024: { seollal: [2, 10], buddha: [5, 15], chuseok: [9, 17] },
+  2025: { seollal: [1, 29], buddha: [5, 5], chuseok: [10, 6] },
+  2026: { seollal: [2, 17], buddha: [5, 24], chuseok: [9, 25] },
+  2027: { seollal: [2, 7], buddha: [5, 13], chuseok: [9, 15] },
+  2028: { seollal: [1, 27], buddha: [5, 2], chuseok: [10, 3] },
+  2029: { seollal: [2, 13], buddha: [5, 20], chuseok: [9, 22] },
+  2030: { seollal: [2, 3], buddha: [5, 9], chuseok: [9, 12] },
+  2031: { seollal: [1, 23], buddha: [5, 28], chuseok: [10, 1] },
+  2032: { seollal: [2, 11], buddha: [5, 16], chuseok: [9, 19] },
+  2033: { seollal: [1, 31], buddha: [5, 6], chuseok: [9, 8] }
+};
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const toDateKeyRaw = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const buildKoreanHolidaysForYears = (years) => {
+  const map = {};
+  const addHoliday = (dateObj, name) => {
+    const key = toDateKeyRaw(dateObj);
+    if (map[key]) {
+      if (!map[key].name.includes(name)) {
+        map[key].name = `${map[key].name}·${name}`;
+      }
+    } else {
+      map[key] = { name, source: 'builtin' };
+    }
+  };
+
+  years.forEach((year) => {
+    const fixedSolar = [
+      { m: 1, d: 1, name: '신정', sub: false },
+      { m: 3, d: 1, name: '삼일절', sub: true },
+      { m: 5, d: 5, name: '어린이날', sub: true },
+      { m: 6, d: 6, name: '현충일', sub: false },
+      { m: 8, d: 15, name: '광복절', sub: true },
+      { m: 10, d: 3, name: '개천절', sub: true },
+      { m: 10, d: 9, name: '한글날', sub: true },
+      { m: 12, d: 25, name: '성탄절', sub: true }
+    ];
+
+    fixedSolar.forEach(({ m, d, name, sub }) => {
+      const dt = new Date(year, m - 1, d);
+      addHoliday(dt, name);
+
+      if (sub) {
+        const dow = dt.getDay();
+        if (dow === 0 || dow === 6) {
+          const cursor = new Date(dt);
+          cursor.setDate(cursor.getDate() + 1);
+          while (cursor.getDay() === 0 || cursor.getDay() === 6 || map[toDateKeyRaw(cursor)]) {
+            cursor.setDate(cursor.getDate() + 1);
+          }
+          addHoliday(cursor, `${name} 대체공휴일`);
+        }
+      }
+    });
+
+    const lunar = LUNAR_HOLIDAY_ANCHORS[year];
+    if (lunar) {
+      const seolBase = new Date(year, lunar.seollal[0] - 1, lunar.seollal[1]);
+      const seolDays = [-1, 0, 1].map((offset) => {
+        const dt = new Date(seolBase);
+        dt.setDate(seolBase.getDate() + offset);
+        addHoliday(dt, offset === 0 ? '설날' : '설날 연휴');
+        return dt;
+      });
+      if (seolDays.some((dt) => dt.getDay() === 0)) {
+        const cursor = new Date(seolDays[2]);
+        cursor.setDate(cursor.getDate() + 1);
+        while (cursor.getDay() === 0 || cursor.getDay() === 6 || map[toDateKeyRaw(cursor)]) {
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        addHoliday(cursor, '설날 대체공휴일');
+      }
+
+      const buddhaDt = new Date(year, lunar.buddha[0] - 1, lunar.buddha[1]);
+      addHoliday(buddhaDt, '부처님오신날');
+      if (buddhaDt.getDay() === 0 || buddhaDt.getDay() === 6) {
+        const cursor = new Date(buddhaDt);
+        cursor.setDate(cursor.getDate() + 1);
+        while (cursor.getDay() === 0 || cursor.getDay() === 6 || map[toDateKeyRaw(cursor)]) {
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        addHoliday(cursor, '부처님오신날 대체공휴일');
+      }
+
+      const chuseokBase = new Date(year, lunar.chuseok[0] - 1, lunar.chuseok[1]);
+      const chuseokDays = [-1, 0, 1].map((offset) => {
+        const dt = new Date(chuseokBase);
+        dt.setDate(chuseokBase.getDate() + offset);
+        addHoliday(dt, offset === 0 ? '추석' : '추석 연휴');
+        return dt;
+      });
+      if (chuseokDays.some((dt) => dt.getDay() === 0)) {
+        const cursor = new Date(chuseokDays[2]);
+        cursor.setDate(cursor.getDate() + 1);
+        while (cursor.getDay() === 0 || cursor.getDay() === 6 || map[toDateKeyRaw(cursor)]) {
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        addHoliday(cursor, '추석 대체공휴일');
+      }
+    }
+  });
+
+  return map;
+};
+
+const DEFAULT_KR_HOLIDAYS_ALL_YEARS = buildKoreanHolidaysForYears(YEAR_OPTIONS);
+
+// ============================================================================
+// 3. 색상 팔레트 & 업무 분류
+// ============================================================================
+const COLOR_PALETTES = {
+  indigo: { key: 'indigo', name: '인디고', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', dot: 'bg-indigo-500' },
+  emerald: { key: 'emerald', name: '에메랄드', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
+  amber: { key: 'amber', name: '앰버', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+  cyan: { key: 'cyan', name: '시안', bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200', dot: 'bg-cyan-500' },
+  rose: { key: 'rose', name: '로즈', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', dot: 'bg-rose-500' },
+  violet: { key: 'violet', name: '바이올렛', bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', dot: 'bg-violet-500' },
+  slate: { key: 'slate', name: '슬레이트', bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-500' },
+  orange: { key: 'orange', name: '오렌지', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' }
+};
+
+const INITIAL_CATEGORIES = [
+  { id: 'accounting', label: '회계', colorKey: 'indigo' },
+  { id: 'hr', label: '인사', colorKey: 'emerald' },
+  { id: 'ga', label: '총무', colorKey: 'amber' },
+  { id: 'office', label: '사무', colorKey: 'cyan' },
+  { id: 'urgent', label: '긴급', colorKey: 'rose' },
+  { id: 'finance', label: '자금', colorKey: 'violet' }
+];
+
+const INITIAL_TEMPLATES = [
+  { id: 'tpl-1', title: '월말 결산 및 세금계산서 마감', category: 'accounting' },
+  { id: 'tpl-2', title: '급여 대장 및 4대보험 정산', category: 'hr' },
+  { id: 'tpl-3', title: '비품 및 시설 정기 점검', category: 'ga' },
+  { id: 'tpl-4', title: '주간 업무 보고서 취합', category: 'office' },
+  { id: 'tpl-5', title: '긴급 자금/결재 승인 확인', category: 'urgent' },
+  { id: 'tpl-6', title: '일일 자금 시재 및 입출금 마감', category: 'finance' }
+];
+
+const INITIAL_TASKS = [];
+
+const DAYS_OF_WEEK = ['일', '월', '화', '수', '목', '금', '토'];
+const WEEKDAY_BUTTON_ORDER = [
+  { dayIdx: 1, label: '월' },
+  { dayIdx: 2, label: '화' },
+  { dayIdx: 3, label: '수' },
+  { dayIdx: 4, label: '목' },
+  { dayIdx: 5, label: '금' },
+  { dayIdx: 6, label: '토' },
+  { dayIdx: 0, label: '일' }
+];
+const MONTHS_KR = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
+
+const getSystemToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+const formatDateKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const parseDateKey = (dateKey) => {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const nowHHMM = () => {
+  const n = new Date();
+  return `${pad2(n.getHours())}:${pad2(n.getMinutes())}`;
+};
+
+const buildMonthWeeks = (year, monthIndex) => {
+  const firstDay = new Date(year, monthIndex, 1);
+  const lastDay = new Date(year, monthIndex + 1, 0);
+
+  const startSunday = new Date(firstDay);
+  startSunday.setDate(firstDay.getDate() - firstDay.getDay());
+
+  const endSunday = new Date(lastDay);
+  endSunday.setDate(lastDay.getDate() - lastDay.getDay());
+
+  const weeks = [];
+  const cursor = new Date(startSunday);
+  while (cursor.getTime() <= endSunday.getTime()) {
+    const weekDays = [];
+    for (let d = 0; d < 7; d++) {
+      weekDays.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    weeks.push(weekDays);
+  }
+  return weeks;
+};
+
+const STORAGE_KEY_UNIFIED = 'work_calendar_all_years_v1';
+const STORAGE_KEY_HOLIDAYS = 'work_calendar_holidays_all_years_v1';
+const STORAGE_KEY_LINKED_UID = 'work_calendar_linked_uid_v1';
+const MAX_HISTORY_STEPS = 30;
+
+const LEAVE_TYPES = {
+  full: { key: 'full', label: '연차', shortLabel: '연차 (-1)', emoji: '🌴', deduction: 1.0, badgeClass: 'bg-teal-100 text-teal-800 border-teal-300', cellTint: 'bg-teal-50/45 hover:bg-teal-50/75' },
+  am: { key: 'am', label: '오전반차', shortLabel: '오전반차 (-0.5)', emoji: '🌤️', deduction: 0.5, badgeClass: 'bg-sky-100 text-sky-800 border-sky-300', cellTint: 'bg-sky-50/45 hover:bg-sky-50/75' },
+  pm: { key: 'pm', label: '오후반차', shortLabel: '오후반차 (-0.5)', emoji: '🌇', deduction: 0.5, badgeClass: 'bg-orange-100 text-orange-800 border-orange-300', cellTint: 'bg-orange-50/45 hover:bg-orange-50/75' }
+};
+
+// 저장 데이터 정규화 (로컬 저장소 / 클라우드 공통)
+const normalizeCalState = (parsed) => {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const allowanceByYear =
+    parsed.annualLeaveByYear && typeof parsed.annualLeaveByYear === 'object'
+      ? { ...parsed.annualLeaveByYear }
+      : {};
+  if (
+    parsed.totalAnnualLeave !== undefined &&
+    !Number.isNaN(Number(parsed.totalAnnualLeave)) &&
+    allowanceByYear[2027] === undefined
+  ) {
+    allowanceByYear[2027] = Number(parsed.totalAnnualLeave);
+  }
+  return {
+    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : INITIAL_TASKS,
+    recurringTemplates: Array.isArray(parsed.recurringTemplates) ? parsed.recurringTemplates : INITIAL_TEMPLATES,
+    categories: Array.isArray(parsed.categories) && parsed.categories.length > 0 ? parsed.categories : INITIAL_CATEGORIES,
+    customHolidays: parsed.customHolidays && typeof parsed.customHolidays === 'object' ? parsed.customHolidays : {},
+    leaves: parsed.leaves && typeof parsed.leaves === 'object' ? parsed.leaves : {},
+    annualLeaveByYear: allowanceByYear
+  };
+};
+
+const DEFAULT_CAL_STATE = () => ({
+  tasks: INITIAL_TASKS,
+  recurringTemplates: INITIAL_TEMPLATES,
+  categories: INITIAL_CATEGORIES,
+  customHolidays: {},
+  leaves: {},
+  annualLeaveByYear: {}
+});
+
+const loadInitialCalendarState = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_UNIFIED) || localStorage.getItem('work_calendar_2027_v6');
+    if (raw) {
+      const normalized = normalizeCalState(JSON.parse(raw));
+      if (normalized) return normalized;
+    }
+  } catch (e) {}
+  return DEFAULT_CAL_STATE();
+};
+
+// 이 기기에 사용자가 입력한 데이터가 있는지 (기본값만 있으면 false)
+const hasUserData = (state) =>
+  (state.tasks && state.tasks.length > 0) ||
+  Object.keys(state.leaves || {}).length > 0 ||
+  Object.keys(state.customHolidays || {}).length > 0 ||
+  Object.keys(state.annualLeaveByYear || {}).length > 0;
+
+function App() {
+  const systemToday = useMemo(() => getSystemToday(), []);
+  const todayKey = formatDateKey(systemToday);
+
+  const [viewMode, setViewMode] = useState('3week');
+  const [cellHeightMode, setCellHeightMode] = useState('expand');
+  const [collapsedCells, setCollapsedCells] = useState({});
+  const [anchorDate, setAnchorDate] = useState(() => getSystemToday());
+
+  const fileInputRef = useRef(null);
+  const backupTextareaRef = useRef(null);
+
+  const [calState, setCalState] = useState(() => loadInitialCalendarState());
+
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+
+  const {
+    tasks,
+    categories,
+    customHolidays,
+    leaves,
+    annualLeaveByYear,
+    recurringTemplates: templates
+  } = calState;
+
+  const activeYear = anchorDate.getFullYear();
+  const totalAnnualLeave =
+    annualLeaveByYear && annualLeaveByYear[activeYear] !== undefined
+      ? Number(annualLeaveByYear[activeYear])
+      : 15;
+
+  const calStateRef = useRef(calState);
+  calStateRef.current = calState;
+
+  // ============================================================================
+  // 상태 변경 + 히스토리 스냅샷 자동 기록 래퍼
+  // ============================================================================
+  const commitCalendarChange = useCallback((updater) => {
+    setCalState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (JSON.stringify(prev) === JSON.stringify(next)) {
+        return prev;
+      }
+      setUndoStack((u) => {
+        const cloned = JSON.parse(JSON.stringify(prev));
+        const nextUndo = [...u, cloned];
+        return nextUndo.length > MAX_HISTORY_STEPS
+          ? nextUndo.slice(nextUndo.length - MAX_HISTORY_STEPS)
+          : nextUndo;
+      });
+      setRedoStack([]);
+      return next;
+    });
+  }, []);
+
+  const [toastMessage, setToastMessage] = useState(null);
+  const showToast = useCallback((msg) => setToastMessage(msg), []);
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const previousSnapshot = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => {
+      const currentCloned = JSON.parse(JSON.stringify(calState));
+      const nextRedo = [...prev, currentCloned];
+      return nextRedo.length > MAX_HISTORY_STEPS
+        ? nextRedo.slice(nextRedo.length - MAX_HISTORY_STEPS)
+        : nextRedo;
+    });
+    setCalState(previousSnapshot);
+    showToast('이전 상태로 되돌렸습니다.');
+  }, [undoStack, calState, showToast]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const nextSnapshot = redoStack[redoStack.length - 1];
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => {
+      const currentCloned = JSON.parse(JSON.stringify(calState));
+      const nextUndo = [...prev, currentCloned];
+      return nextUndo.length > MAX_HISTORY_STEPS
+        ? nextUndo.slice(nextUndo.length - MAX_HISTORY_STEPS)
+        : nextUndo;
+    });
+    setCalState(nextSnapshot);
+    showToast('되돌린 작업을 다시 실행했습니다.');
+  }, [redoStack, calState, showToast]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const tagName = (e.target?.tagName || '').toLowerCase();
+      const isEditable =
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select' ||
+        e.target?.isContentEditable;
+      if (isEditable) return;
+
+      const isMod = e.ctrlKey || e.metaKey;
+      if (!isMod) return;
+
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if (
+        e.key.toLowerCase() === 'y' ||
+        (e.key.toLowerCase() === 'z' && e.shiftKey)
+      ) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // ============================================================================
+  // 클라우드 동기화 (구글 로그인 + Firestore 실시간 자동 동기화)
+  //   저장 위치: users/{내 uid}/calendar/main  (보안 규칙으로 본인만 접근)
+  // ============================================================================
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(!FB);
+  const [syncStatus, setSyncStatus] = useState('local'); // local | loading | saving | saved | error
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [syncNonce, setSyncNonce] = useState(0);
+  const clientIdRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const lastCloudJsonRef = useRef(null);
+  const cloudReadyRef = useRef(false);
+
+  // 로그인 상태 감시
+  useEffect(() => {
+    if (!FB) return;
+    const unsub = FB.onAuthStateChanged(FB.auth, (user) => {
+      setAuthUser(user || null);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    if (!FB) {
+      showToast('동기화 모듈을 불러오지 못했습니다. 인터넷 연결을 확인하고 새로고침해 주세요.');
+      return;
+    }
+    try {
+      await FB.signInWithPopup(FB.auth, new FB.GoogleAuthProvider());
+    } catch (err) {
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+      if (code === 'auth/popup-blocked') {
+        showToast('팝업이 차단되었습니다. 브라우저에서 이 사이트의 팝업을 허용한 뒤 다시 눌러주세요.');
+      } else if (code === 'auth/unauthorized-domain') {
+        showToast(`이 주소(${window.location.hostname})가 Firebase 승인된 도메인에 없습니다. Authentication → 설정 → 승인된 도메인에 추가해 주세요.`);
+      } else if (code === 'auth/operation-not-allowed') {
+        showToast('Firebase 콘솔 Authentication에서 Google 로그인을 사용 설정해 주세요.');
+      } else {
+        showToast(`로그인 실패: ${err?.message || code}`);
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!FB) return;
+    const ok = window.confirm('로그아웃할까요?\n이 기기에 있는 일정은 그대로 남고, 로그아웃 후에는 동기화가 중단됩니다.');
+    if (!ok) return;
+    try {
+      await FB.signOut(FB.auth);
+      showToast('로그아웃되었습니다.');
+    } catch (e) {
+      showToast('로그아웃 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 클라우드 문서 구독 (로그인 직후 1회 병합 + 이후 다른 기기 변경 실시간 반영)
+  useEffect(() => {
+    if (!FB || !authUser) {
+      cloudReadyRef.current = false;
+      lastCloudJsonRef.current = null;
+      setSyncStatus('local');
+      return;
+    }
+
+    const uid = authUser.uid;
+    const ref = FB.doc(FB.db, 'users', uid, 'calendar', 'main');
+    let isFirst = true;
+    cloudReadyRef.current = false;
+    lastCloudJsonRef.current = null;
+    setSyncStatus('loading');
+
+    const markLinked = () => {
+      try { localStorage.setItem(STORAGE_KEY_LINKED_UID, uid); } catch (e) {}
+    };
+    const finishReady = () => {
+      cloudReadyRef.current = true;
+      markLinked();
+      setSyncStatus('saved');
+      setLastSyncTime(nowHHMM());
+    };
+    const uploadNow = async (state) => {
+      const json = JSON.stringify(state);
+      await FB.setDoc(ref, {
+        payload: json,
+        updatedAt: Date.now(),
+        clientId: clientIdRef.current
+      });
+      lastCloudJsonRef.current = json;
+    };
+    const failUpload = (err) => {
+      setSyncStatus('error');
+      showToast(
+        err?.code === 'permission-denied'
+          ? '저장 권한이 거부되었습니다. Firestore 보안 규칙(Rules)을 확인해 주세요.'
+          : `클라우드 저장 실패: ${err?.message || '네트워크를 확인해 주세요.'}`
+      );
+    };
+
+    const unsub = FB.onSnapshot(
+      ref,
+      (snap) => {
+        // ---- 로그인 후 첫 수신: 이 기기 데이터와 클라우드 데이터 병합 결정 ----
+        if (isFirst) {
+          isFirst = false;
+          const localState = calStateRef.current;
+
+          if (!snap.exists()) {
+            uploadNow(localState).then(finishReady).catch(failUpload);
+            return;
+          }
+
+          let cloudState = null;
+          try {
+            cloudState = normalizeCalState(JSON.parse(snap.data().payload));
+          } catch (e) {}
+          if (!cloudState) {
+            uploadNow(localState).then(finishReady).catch(failUpload);
+            return;
+          }
+
+          const localJson = JSON.stringify(localState);
+          const cloudJson = JSON.stringify(cloudState);
+          lastCloudJsonRef.current = cloudJson;
+
+          if (localJson === cloudJson) {
+            finishReady();
+            return;
+          }
+
+          let linked = null;
+          try { linked = localStorage.getItem(STORAGE_KEY_LINKED_UID); } catch (e) {}
+
+          if (linked === uid || !hasUserData(localState)) {
+            setCalState(cloudState);
+            setUndoStack([]);
+            setRedoStack([]);
+            finishReady();
+            return;
+          }
+
+          const useCloud = window.confirm(
+            '클라우드에 이미 저장된 일정이 있고, 이 기기에도 다른 일정이 있습니다.\n\n' +
+            '[확인] 클라우드 일정을 불러옵니다 (이 기기의 일정은 대체됩니다. ↩ 되돌리기로 복구 가능)\n' +
+            '[취소] 다음 단계로 이동'
+          );
+          if (useCloud) {
+            commitCalendarChange(cloudState);
+            finishReady();
+            showToast('클라우드 일정을 불러왔습니다. 잘못 불러왔다면 ↩ 버튼으로 되돌릴 수 있습니다.');
+          } else {
+            const overwrite = window.confirm(
+              '이 기기의 일정으로 클라우드를 덮어쓸까요?\n(클라우드에 저장돼 있던 기존 일정은 사라집니다)\n\n' +
+              '[취소]를 누르면 로그아웃하고 아무것도 바꾸지 않습니다.'
+            );
+            if (overwrite) {
+              uploadNow(localState).then(finishReady).catch(failUpload);
+            } else {
+              FB.signOut(FB.auth);
+            }
+          }
+          return;
+        }
+
+        // ---- 이후 수신: 다른 기기에서 바뀐 내용 반영 ----
+        if (snap.metadata.hasPendingWrites) return;
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (!d || d.clientId === clientIdRef.current) return;
+        try {
+          const next = normalizeCalState(JSON.parse(d.payload));
+          if (!next) return;
+          const nextJson = JSON.stringify(next);
+          lastCloudJsonRef.current = nextJson;
+          if (nextJson === JSON.stringify(calStateRef.current)) return;
+          setCalState(next);
+          setUndoStack([]);
+          setRedoStack([]);
+          setSyncStatus('saved');
+          setLastSyncTime(nowHHMM());
+          showToast('다른 기기에서 변경된 일정이 반영되었습니다.');
+        } catch (e) {}
+      },
+      (err) => {
+        setSyncStatus('error');
+        showToast(
+          err?.code === 'permission-denied'
+            ? '읽기 권한이 거부되었습니다. Firestore 보안 규칙(Rules)을 확인해 주세요.'
+            : `클라우드 연결 오류: ${err?.message || '네트워크를 확인해 주세요.'}`
+        );
+      }
+    );
+
+    return () => unsub();
+  }, [authUser]);
+
+  // 변경 시 자동 저장 (입력 후 약 1초 뒤 클라우드에 반영)
+  useEffect(() => {
+    if (!FB || !authUser || !cloudReadyRef.current) return;
+    const json = JSON.stringify(calState);
+    if (json === lastCloudJsonRef.current) return;
+
+    setSyncStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        const ref = FB.doc(FB.db, 'users', authUser.uid, 'calendar', 'main');
+        await FB.setDoc(ref, {
+          payload: json,
+          updatedAt: Date.now(),
+          clientId: clientIdRef.current
+        });
+        lastCloudJsonRef.current = json;
+        setSyncStatus('saved');
+        setLastSyncTime(nowHHMM());
+      } catch (err) {
+        setSyncStatus('error');
+        showToast(
+          err?.code === 'permission-denied'
+            ? '저장 권한이 거부되었습니다. Firestore 보안 규칙(Rules)을 확인해 주세요.'
+            : '클라우드 저장에 실패했습니다. 인터넷 연결 후 상단 동기화 버튼을 눌러 다시 시도해 주세요.'
+        );
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [calState, authUser, syncNonce]);
+
+  // 인터넷이 다시 연결되면 자동 재시도
+  useEffect(() => {
+    const onOnline = () => setSyncNonce((n) => n + 1);
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  const syncLabel = (() => {
+    if (syncStatus === 'loading') return '불러오는 중...';
+    if (syncStatus === 'saving') return '저장 중...';
+    if (syncStatus === 'error') return '저장 실패 · 다시 시도';
+    return `동기화됨${lastSyncTime ? ` · ${lastSyncTime}` : ''}`;
+  })();
+
+  // ============================================================================
+  // 공휴일 / UI 상태
+  // ============================================================================
+  const [apiHolidays, setApiHolidays] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_HOLIDAYS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return { ...DEFAULT_KR_HOLIDAYS_ALL_YEARS, ...parsed };
+        }
+      }
+    } catch (e) {}
+    return DEFAULT_KR_HOLIDAYS_ALL_YEARS;
+  });
+
+  const [isLeaveSummaryModalOpen, setIsLeaveSummaryModalOpen] = useState(false);
+  const [onlyLeaveDatesFilter, setOnlyLeaveDatesFilter] = useState(false);
+  const [modalLeaveMemo, setModalLeaveMemo] = useState('');
+
+  const [isSyncingHolidays, setIsSyncingHolidays] = useState(false);
+  const [lastHolidaySyncTime, setLastHolidaySyncTime] = useState(null);
+  const [customHolidayInputName, setCustomHolidayInputName] = useState('');
+
+  const [backupModalData, setBackupModalData] = useState(null);
+  const [backupCopiedFlag, setBackupCopiedFlag] = useState(false);
+
+  const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
+  const [restoreTab, setRestoreTab] = useState('paste');
+  const [pasteRestoreText, setPasteRestoreText] = useState('');
+
+  const [restoreCompleteModal, setRestoreCompleteModal] = useState(null);
+
+  const [isCategoryInlineOpen, setIsCategoryInlineOpen] = useState(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState('');
+  const [newCategoryColorKey, setNewCategoryColorKey] = useState('orange');
+
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return true;
+  });
+
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState(['tpl-1']);
+  const [newTplTitle, setNewTplTitle] = useState('');
+  const [newTplCategory, setNewTplCategory] = useState('accounting');
+  const [editingTplId, setEditingTplId] = useState(null);
+  const [editingTplTitle, setEditingTplTitle] = useState('');
+  const [editingTplCategory, setEditingTplCategory] = useState('accounting');
+
+  const [weekdayScope, setWeekdayScope] = useState('current_month');
+  const [selectedWeekdays, setSelectedWeekdays] = useState([1, 3, 5]);
+  const [excludeHolidaysOnWeekday, setExcludeHolidaysOnWeekday] = useState(true);
+
+  const [businessDayScope, setBusinessDayScope] = useState('full_year');
+  const [businessDayMode, setBusinessDayMode] = useState('nth_day');
+  const [businessTargetDay, setBusinessTargetDay] = useState(25);
+  const [businessShiftRule, setBusinessShiftRule] = useState('prev');
+
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedDateKeys, setSelectedDateKeys] = useState([]);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [isSearchDrawerOpen, setIsSearchDrawerOpen] = useState(false);
+  const [clipboardTasks, setClipboardTasks] = useState([]);
+  const [copyTargetTask, setCopyTargetTask] = useState(null);
+  const [copyTargetDateInput, setCopyTargetDateInput] = useState(() => formatDateKey(getSystemToday()));
+
+  const [modalDate, setModalDate] = useState(null);
+  const [modalBatchInput, setModalBatchInput] = useState('');
+  const [modalCategory, setModalCategory] = useState('accounting');
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState('');
+  const [editingTaskCategory, setEditingTaskCategory] = useState('accounting');
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 4200);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_UNIFIED, JSON.stringify(calState));
+    } catch (e) {}
+  }, [calState]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_HOLIDAYS, JSON.stringify(apiHolidays));
+    } catch (e) {}
+  }, [apiHolidays]);
+
+  const effectiveHolidays = useMemo(() => {
+    const merged = { ...apiHolidays };
+    Object.entries(customHolidays).forEach(([dateKey, info]) => {
+      if (!info) return;
+      if (info.disabled) {
+        delete merged[dateKey];
+      } else {
+        merged[dateKey] = {
+          name: info.name || '지정 휴무일',
+          source: 'custom'
+        };
+      }
+    });
+    return merged;
+  }, [apiHolidays, customHolidays]);
+
+  const syncKoreanHolidays = async (silent = false) => {
+    setIsSyncingHolidays(true);
+    try {
+      const targetYears = Array.from(
+        new Set([
+          systemToday.getFullYear(),
+          activeYear - 1,
+          activeYear,
+          activeYear + 1,
+          activeYear + 2
+        ])
+      ).filter((y) => y >= 2020 && y <= 2040);
+
+      const responses = await Promise.all(
+        targetYears.map((yr) =>
+          fetch(`https://date.nager.at/api/v3/PublicHolidays/${yr}/KR`)
+            .then((res) => (res.ok ? res.json() : []))
+            .catch(() => [])
+        )
+      );
+
+      const fetchedMap = {};
+      let fetchedCount = 0;
+      responses.forEach((list) => {
+        if (Array.isArray(list)) {
+          list.forEach((item) => {
+            if (item && item.date) {
+              fetchedMap[item.date] = {
+                name: item.localName || item.name || '공휴일',
+                source: 'api'
+              };
+              fetchedCount += 1;
+            }
+          });
+        }
+      });
+
+      if (fetchedCount > 0) {
+        setApiHolidays((prev) => ({
+          ...DEFAULT_KR_HOLIDAYS_ALL_YEARS,
+          ...prev,
+          ...fetchedMap
+        }));
+        setLastHolidaySyncTime(nowHHMM());
+        if (!silent) {
+          showToast(
+            `대한민국 공휴일 동기화 완료! (${targetYears.join(', ')}년 총 ${fetchedCount}건 최신화)`
+          );
+        }
+      } else if (!silent) {
+        showToast(`${activeYear}년 대한민국 법정·음력·대체공휴일 데이터가 적용 중입니다.`);
+      }
+    } catch (err) {
+      if (!silent) {
+        showToast('네트워크 연결이 원활하지 않아 내장된 전체 연도 공휴일 데이터를 유지합니다.');
+      }
+    } finally {
+      setIsSyncingHolidays(false);
+    }
+  };
+
+  useEffect(() => {
+    syncKoreanHolidays(true);
+  }, [activeYear]);
+
+  useEffect(() => {
+    if (!modalDate) return;
+    const existing = effectiveHolidays[modalDate];
+    setCustomHolidayInputName(existing ? existing.name : '');
+    const existingLeave = leaves[modalDate];
+    setModalLeaveMemo(existingLeave?.memo || '');
+  }, [modalDate]);
+
+  const handleSelectYear = (nextYear) => {
+    const clamped = Math.max(2020, Math.min(2040, Number(nextYear)));
+    setAnchorDate((prev) => {
+      const lastDay = new Date(clamped, prev.getMonth() + 1, 0).getDate();
+      return new Date(clamped, prev.getMonth(), Math.min(prev.getDate(), lastDay));
+    });
+  };
+
+  const leaveStats = useMemo(() => {
+    const targetYearStr = String(activeYear);
+    let fullCount = 0;
+    let amCount = 0;
+    let pmCount = 0;
+    const list = [];
+
+    Object.entries(leaves).forEach(([dateKey, info]) => {
+      if (!info || !LEAVE_TYPES[info.type]) return;
+      if (!dateKey.startsWith(targetYearStr)) return;
+      const meta = LEAVE_TYPES[info.type];
+      if (info.type === 'full') fullCount += 1;
+      else if (info.type === 'am') amCount += 1;
+      else if (info.type === 'pm') pmCount += 1;
+
+      list.push({ dateKey, type: info.type, memo: info.memo || '', meta });
+    });
+
+    list.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    const usedDays = Number((fullCount * 1.0 + amCount * 0.5 + pmCount * 0.5).toFixed(1));
+    const remainingDays = Number((Number(totalAnnualLeave || 0) - usedDays).toFixed(1));
+
+    return {
+      year: activeYear,
+      fullCount,
+      amCount,
+      pmCount,
+      totalEntries: list.length,
+      usedDays,
+      remainingDays,
+      list
+    };
+  }, [leaves, activeYear, totalAnnualLeave]);
+
+  const handleSetLeaveOnDate = (dateKey, leaveType, memoText = modalLeaveMemo) => {
+    if (!leaveType) {
+      commitCalendarChange((prev) => {
+        const nextLeaves = { ...prev.leaves };
+        delete nextLeaves[dateKey];
+        return { ...prev, leaves: nextLeaves };
+      });
+      setModalLeaveMemo('');
+      showToast(`${dateKey} 날짜의 연차·반차 지정이 해제되었습니다.`);
+      return;
+    }
+
+    const meta = LEAVE_TYPES[leaveType];
+    if (!meta) return;
+    commitCalendarChange((prev) => ({
+      ...prev,
+      leaves: {
+        ...prev.leaves,
+        [dateKey]: { type: leaveType, memo: (memoText || '').trim() }
+      }
+    }));
+    showToast(`${dateKey} 날짜에 "${meta.label}" (${meta.deduction}일 차감)가 지정되었습니다.`);
+  };
+
+  const handleSaveCustomHoliday = (dateKey) => {
+    const label = customHolidayInputName.trim() || '임시공휴일/휴무일';
+    commitCalendarChange((prev) => ({
+      ...prev,
+      customHolidays: {
+        ...prev.customHolidays,
+        [dateKey]: { name: label, disabled: false }
+      }
+    }));
+    showToast(`${dateKey} 날짜가 "${label}"(휴무일)로 지정되었습니다.`);
+  };
+
+  const handleRemoveHolidayOnDate = (dateKey) => {
+    commitCalendarChange((prev) => {
+      const nextCustom = { ...prev.customHolidays };
+      if (apiHolidays[dateKey]) {
+        nextCustom[dateKey] = { name: '', disabled: true };
+      } else {
+        delete nextCustom[dateKey];
+      }
+      return { ...prev, customHolidays: nextCustom };
+    });
+    setCustomHolidayInputName('');
+    showToast(`${dateKey} 날짜의 공휴일/휴무일 표시가 해제되었습니다.`);
+  };
+
+  // ============================================================================
+  // 4. 백업(파일·텍스트) / 복구 — 클라우드와 별개로 직접 보관하는 보험용
+  // ============================================================================
+  const buildBackupPayloadObject = () => {
+    return {
+      appName: 'All_Years_Work_Schedule_Calendar',
+      version: '9.0',
+      exportedAt: new Date().toISOString(),
+      data: {
+        tasks,
+        recurringTemplates: templates,
+        categories,
+        customHolidays,
+        leaves,
+        annualLeaveByYear,
+        totalAnnualLeave
+      }
+    };
+  };
+
+  const handleExportBackup = () => {
+    const payloadObj = buildBackupPayloadObject();
+    const jsonStr = JSON.stringify(payloadObj, null, 2);
+    const now = new Date();
+    const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    const fileName = `업무캘린더_전체연도_백업_${stamp}.json`;
+    const timeFormatted = `${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
+    try {
+      const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.rel = 'noopener';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (link.parentNode) document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 1500);
+    } catch (e) {
+      try {
+        const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonStr);
+        const fallbackLink = document.createElement('a');
+        fallbackLink.href = dataUri;
+        fallbackLink.download = fileName;
+        fallbackLink.style.display = 'none';
+        document.body.appendChild(fallbackLink);
+        fallbackLink.click();
+        setTimeout(() => {
+          if (fallbackLink.parentNode) document.body.removeChild(fallbackLink);
+        }, 1000);
+      } catch (err) {}
+    }
+
+    const customHolidayCount = Object.values(customHolidays).filter((h) => h && !h.disabled).length;
+    const leavesCount = Object.keys(leaves).length;
+
+    setBackupCopiedFlag(false);
+    setBackupModalData({
+      fileName,
+      rawJson: jsonStr,
+      locationTitle: '브라우저 기본 다운로드 폴더',
+      locationDetail:
+        '다운로드가 지원되는 브라우저에서는 다운로드 폴더에 JSON 파일이 저장됩니다. 저장된 파일은 구글 드라이브 등에 따로 보관해 두세요. 다운로드가 제한되는 환경에서는 아래 [백업 텍스트 전체 복사] 버튼으로 보관할 수 있습니다.',
+      timestamp: timeFormatted,
+      stats: {
+        tasksCount: tasks.length,
+        categoriesCount: categories.length,
+        templatesCount: templates.length,
+        customHolidayCount,
+        leavesCount
+      }
+    });
+  };
+
+  const copyTextSafely = async (textToCopy) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textToCopy);
+        return true;
+      }
+    } catch (e) {}
+
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = textToCopy;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, textToCopy.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleOneTouchCopyBackup = async () => {
+    if (!backupModalData?.rawJson) return;
+    const success = await copyTextSafely(backupModalData.rawJson);
+    if (success) {
+      setBackupCopiedFlag(true);
+      showToast('백업 텍스트 전체가 복사되었습니다! 메모장이나 메신저에 붙여넣어 보관하세요.');
+    } else {
+      if (backupTextareaRef.current) {
+        backupTextareaRef.current.focus();
+        backupTextareaRef.current.select();
+      }
+      showToast('자동 복사가 제한된 환경입니다. 아래 코드 상자를 전체 선택해 복사해주세요.');
+    }
+  };
+
+  const applyRestoredPayloadObject = (parsed, sourceLabel) => {
+    try {
+      const restoredData = parsed?.data ? parsed.data : parsed;
+
+      if (!restoredData || !Array.isArray(restoredData.tasks)) {
+        showToast('올바른 캘린더 백업 데이터 형식이 아닙니다.');
+        return false;
+      }
+
+      const nextTasks = restoredData.tasks;
+      const rawTemplates = Array.isArray(restoredData.recurringTemplates)
+        ? restoredData.recurringTemplates
+        : Array.isArray(restoredData.templates)
+        ? restoredData.templates
+        : templates;
+      const nextCategories =
+        Array.isArray(restoredData.categories) && restoredData.categories.length > 0
+          ? restoredData.categories
+          : categories;
+      const nextCustomHolidays =
+        restoredData.customHolidays && typeof restoredData.customHolidays === 'object'
+          ? restoredData.customHolidays
+          : customHolidays;
+      const nextLeaves =
+        restoredData.leaves && typeof restoredData.leaves === 'object'
+          ? restoredData.leaves
+          : leaves;
+
+      const nextAnnualLeaveByYear =
+        restoredData.annualLeaveByYear && typeof restoredData.annualLeaveByYear === 'object'
+          ? { ...annualLeaveByYear, ...restoredData.annualLeaveByYear }
+          : { ...annualLeaveByYear };
+
+      if (
+        restoredData.totalAnnualLeave !== undefined &&
+        !Number.isNaN(Number(restoredData.totalAnnualLeave)) &&
+        nextAnnualLeaveByYear[activeYear] === undefined
+      ) {
+        nextAnnualLeaveByYear[activeYear] = Number(restoredData.totalAnnualLeave);
+      }
+
+      commitCalendarChange({
+        tasks: nextTasks,
+        recurringTemplates: rawTemplates,
+        categories: nextCategories,
+        customHolidays: nextCustomHolidays,
+        leaves: nextLeaves,
+        annualLeaveByYear: nextAnnualLeaveByYear
+      });
+
+      const now = new Date();
+      const timeFormatted = `${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
+      const customHolidayCount = Object.values(nextCustomHolidays).filter((h) => h && !h.disabled).length;
+      const leavesCount = Object.keys(nextLeaves).length;
+
+      setIsRestoreModalOpen(false);
+      setPasteRestoreText('');
+      setRestoreCompleteModal({
+        sourceLabel,
+        locationTitle: authUser ? '이 기기 + 구글 계정 클라우드 (자동 동기화)' : '현재 브라우저 저장소 (로그인하면 클라우드에도 저장)',
+        locationDetail: authUser
+          ? '복원한 내용은 잠시 후 클라우드에 자동 저장되어 다른 기기에도 반영됩니다.'
+          : '아직 로그인하지 않아 이 기기에만 저장됩니다. 상단의 [구글 로그인]을 누르면 클라우드에 올라가 다른 기기와 동기화됩니다.',
+        timestamp: timeFormatted,
+        stats: {
+          tasksCount: nextTasks.length,
+          categoriesCount: nextCategories.length,
+          templatesCount: rawTemplates.length,
+          customHolidayCount,
+          leavesCount
+        }
+      });
+      return true;
+    } catch (err) {
+      showToast('백업 데이터를 해석할 수 없습니다. 데이터 형식을 다시 확인해주세요.');
+      return false;
+    }
+  };
+
+  const applyRestoredJsonString = (jsonText, sourceLabel) => {
+    try {
+      const cleaned = (jsonText || '').trim();
+      if (!cleaned) {
+        showToast('복구할 백업 데이터 내용이 비어 있습니다.');
+        return false;
+      }
+      const parsed = JSON.parse(cleaned);
+      return applyRestoredPayloadObject(parsed, sourceLabel);
+    } catch (err) {
+      showToast('백업 데이터를 해석할 수 없습니다. 전체 JSON 코드가 빠짐없이 입력되었는지 확인해주세요.');
+      return false;
+    }
+  };
+
+  const handleImportBackupFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const uploadedFileName = `파일: ${file.name}`;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      applyRestoredJsonString(event.target?.result, uploadedFileName);
+      e.target.value = '';
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const categoryMap = useMemo(() => {
+    const map = {};
+    categories.forEach((cat) => {
+      const palette = COLOR_PALETTES[cat.colorKey] || COLOR_PALETTES.slate;
+      map[cat.id] = { ...cat, ...palette };
+    });
+    return map;
+  }, [categories]);
+
+  const getCategoryInfo = (catId) => {
+    if (categoryMap[catId]) return categoryMap[catId];
+    if (categories.length > 0) {
+      const first = categories[0];
+      return { ...first, ...(COLOR_PALETTES[first.colorKey] || COLOR_PALETTES.slate) };
+    }
+    return { id: 'office', label: '사무', ...COLOR_PALETTES.cyan };
+  };
+
+  const getSundayOfWeek = (date) => {
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  };
+
+  const baseThisWeekSunday = useMemo(() => getSundayOfWeek(systemToday), [systemToday]);
+  const baseLastWeekSunday = useMemo(() => {
+    const d = new Date(baseThisWeekSunday);
+    d.setDate(d.getDate() - 7);
+    return d;
+  }, [baseThisWeekSunday]);
+  const baseNextWeekSunday = useMemo(() => {
+    const d = new Date(baseThisWeekSunday);
+    d.setDate(d.getDate() + 7);
+    return d;
+  }, [baseThisWeekSunday]);
+
+  const getWeekHorizonType = (date) => {
+    const sunday = getSundayOfWeek(date);
+    const t = sunday.getTime();
+    if (t === baseLastWeekSunday.getTime()) return 'last';
+    if (t === baseThisWeekSunday.getTime()) return 'this';
+    if (t === baseNextWeekSunday.getTime()) return 'next';
+    return 'other';
+  };
+
+  const calendarWeeks = useMemo(() => {
+    if (viewMode === '3week') {
+      const currentSunday = getSundayOfWeek(anchorDate);
+      const prevSunday = new Date(currentSunday);
+      prevSunday.setDate(prevSunday.getDate() - 7);
+
+      const weeks = [];
+      for (let w = 0; w < 3; w++) {
+        const weekDays = [];
+        for (let d = 0; d < 7; d++) {
+          const cellDate = new Date(prevSunday);
+          cellDate.setDate(prevSunday.getDate() + w * 7 + d);
+          weekDays.push(cellDate);
+        }
+        weeks.push(weekDays);
+      }
+      return weeks;
+    } else if (viewMode === 'month') {
+      return buildMonthWeeks(anchorDate.getFullYear(), anchorDate.getMonth());
+    }
+    return [];
+  }, [viewMode, anchorDate]);
+
+  const fullYearMonthsData = useMemo(() => {
+    const year = anchorDate.getFullYear();
+    return Array.from({ length: 12 }, (_, monthIdx) => ({
+      year,
+      monthIdx,
+      label: MONTHS_KR[monthIdx],
+      weeks: buildMonthWeeks(year, monthIdx)
+    }));
+  }, [anchorDate]);
+
+  const tasksByDate = useMemo(() => {
+    const map = {};
+    tasks.forEach((task) => {
+      if (selectedCategory !== 'all' && task.category !== selectedCategory) return;
+      if (!map[task.date]) map[task.date] = [];
+      map[task.date].push(task);
+    });
+    return map;
+  }, [tasks, selectedCategory]);
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return tasks
+      .filter((t) => {
+        const matchesQuery = !q || t.title.toLowerCase().includes(q) || t.date.includes(q);
+        const matchesCat = selectedCategory === 'all' || t.category === selectedCategory;
+        return matchesQuery && matchesCat;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [tasks, searchQuery, selectedCategory]);
+
+  const horizonStats = useMemo(() => {
+    const stats = {
+      last: { total: 0, completed: 0 },
+      this: { total: 0, completed: 0 },
+      next: { total: 0, completed: 0 }
+    };
+    tasks.forEach((t) => {
+      const type = getWeekHorizonType(parseDateKey(t.date));
+      if (stats[type]) {
+        stats[type].total += 1;
+        if (t.completed) stats[type].completed += 1;
+      }
+    });
+    return stats;
+  }, [tasks, baseLastWeekSunday, baseThisWeekSunday, baseNextWeekSunday]);
+
+  const yearStats = useMemo(() => {
+    const year = anchorDate.getFullYear();
+    let total = 0;
+    let completed = 0;
+    const monthCounts = Array(12).fill(0);
+    const monthCompleted = Array(12).fill(0);
+
+    tasks.forEach((t) => {
+      const d = parseDateKey(t.date);
+      if (d.getFullYear() === year) {
+        total += 1;
+        monthCounts[d.getMonth()] += 1;
+        if (t.completed) {
+          completed += 1;
+          monthCompleted[d.getMonth()] += 1;
+        }
+      }
+    });
+
+    const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { year, total, completed, rate, monthCounts, monthCompleted };
+  }, [tasks, anchorDate]);
+
+  // ============================================================================
+  // 5. 요일별 일괄 등록 날짜 계산
+  // ============================================================================
+  const weekdayPreviewResult = useMemo(() => {
+    const year = anchorDate.getFullYear();
+    let rangeStart;
+    let rangeEnd;
+
+    if (weekdayScope === '3week') {
+      const currentSunday = getSundayOfWeek(anchorDate);
+      rangeStart = new Date(currentSunday);
+      rangeStart.setDate(currentSunday.getDate() - 7);
+      rangeEnd = new Date(rangeStart);
+      rangeEnd.setDate(rangeStart.getDate() + 20);
+    } else if (weekdayScope === 'current_month') {
+      rangeStart = new Date(year, anchorDate.getMonth(), 1);
+      rangeEnd = new Date(year, anchorDate.getMonth() + 1, 0);
+    } else if (weekdayScope === 'q1') {
+      rangeStart = new Date(year, 0, 1);
+      rangeEnd = new Date(year, 2, 31);
+    } else if (weekdayScope === 'h1') {
+      rangeStart = new Date(year, 0, 1);
+      rangeEnd = new Date(year, 5, 30);
+    } else if (weekdayScope === 'h2') {
+      rangeStart = new Date(year, 6, 1);
+      rangeEnd = new Date(year, 11, 31);
+    } else {
+      rangeStart = new Date(year, 0, 1);
+      rangeEnd = new Date(year, 11, 31);
+    }
+
+    const matchedDates = [];
+    const excludedHolidays = [];
+
+    if (selectedWeekdays.length > 0) {
+      const cursor = new Date(rangeStart);
+      while (cursor.getTime() <= rangeEnd.getTime()) {
+        if (selectedWeekdays.includes(cursor.getDay())) {
+          const dKey = formatDateKey(cursor);
+          const holidayInfo = effectiveHolidays[dKey];
+          if (excludeHolidaysOnWeekday && holidayInfo) {
+            excludedHolidays.push({ date: dKey, name: holidayInfo.name });
+          } else {
+            matchedDates.push(dKey);
+          }
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+
+    return { matchedDates, excludedHolidays };
+  }, [anchorDate, weekdayScope, selectedWeekdays, excludeHolidaysOnWeekday, effectiveHolidays]);
+
+  const toggleWeekdayButton = (dayIdx) => {
+    setSelectedWeekdays((prev) =>
+      prev.includes(dayIdx) ? prev.filter((d) => d !== dayIdx) : [...prev, dayIdx]
+    );
+  };
+
+  const handleApplyWeekdayDates = () => {
+    if (selectedWeekdays.length === 0) {
+      showToast('적용할 요일(월~일)을 1개 이상 선택해주세요.');
+      return;
+    }
+    const { matchedDates, excludedHolidays } = weekdayPreviewResult;
+    if (matchedDates.length === 0) {
+      showToast('선택한 조건에 해당하는 근무일 날짜가 없습니다.');
+      return;
+    }
+    setSelectedDateKeys(matchedDates);
+    setIsMultiSelectMode(true);
+
+    const excludedMsg =
+      excludeHolidaysOnWeekday && excludedHolidays.length > 0
+        ? ` (공휴일·휴무일 ${excludedHolidays.length}일 자동 제외됨)`
+        : '';
+    showToast(`${matchedDates.length}개 날짜가 일괄 등록 대상으로 적용되었습니다!${excludedMsg}`);
+  };
+
+  // ============================================================================
+  // 5-2. 영업일 기준 매월 일괄 지정 계산
+  // ============================================================================
+  const isBusinessDayDate = (dateObj) => {
+    const dow = dateObj.getDay();
+    if (dow === 0 || dow === 6) return false;
+    const dKey = formatDateKey(dateObj);
+    if (effectiveHolidays[dKey]) return false;
+    return true;
+  };
+
+  const businessDayPreviewResult = useMemo(() => {
+    const year = anchorDate.getFullYear();
+    let targetMonths = [];
+
+    if (businessDayScope === 'current_month') {
+      targetMonths = [anchorDate.getMonth()];
+    } else if (businessDayScope === 'h1') {
+      targetMonths = [0, 1, 2, 3, 4, 5];
+    } else if (businessDayScope === 'h2') {
+      targetMonths = [6, 7, 8, 9, 10, 11];
+    } else if (businessDayScope === 'q1') {
+      targetMonths = [0, 1, 2];
+    } else if (businessDayScope === 'q2') {
+      targetMonths = [3, 4, 5];
+    } else if (businessDayScope === 'q3') {
+      targetMonths = [6, 7, 8];
+    } else if (businessDayScope === 'q4') {
+      targetMonths = [9, 10, 11];
+    } else {
+      targetMonths = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    }
+
+    const items = [];
+    let adjustedCount = 0;
+
+    targetMonths.forEach((mIdx) => {
+      const lastDayNum = new Date(year, mIdx + 1, 0).getDate();
+
+      if (businessDayMode === 'first_biz') {
+        for (let d = 1; d <= lastDayNum; d++) {
+          const candidate = new Date(year, mIdx, d);
+          if (isBusinessDayDate(candidate)) {
+            const dKey = formatDateKey(candidate);
+            const dowName = DAYS_OF_WEEK[candidate.getDay()];
+            const isShifted = d !== 1;
+            if (isShifted) adjustedCount += 1;
+            items.push({ dateKey: dKey, displayLabel: `${mIdx + 1}/${d}(${dowName})`, shifted: isShifted });
+            break;
+          }
+        }
+      } else if (businessDayMode === 'last_biz') {
+        for (let d = lastDayNum; d >= 1; d--) {
+          const candidate = new Date(year, mIdx, d);
+          if (isBusinessDayDate(candidate)) {
+            const dKey = formatDateKey(candidate);
+            const dowName = DAYS_OF_WEEK[candidate.getDay()];
+            const isShifted = d !== lastDayNum;
+            if (isShifted) adjustedCount += 1;
+            items.push({ dateKey: dKey, displayLabel: `${mIdx + 1}/${d}(${dowName})`, shifted: isShifted });
+            break;
+          }
+        }
+      } else {
+        const clampedDay = Math.min(Math.max(1, Number(businessTargetDay) || 1), lastDayNum);
+        const nominalDate = new Date(year, mIdx, clampedDay);
+
+        if (isBusinessDayDate(nominalDate)) {
+          const dKey = formatDateKey(nominalDate);
+          const dowName = DAYS_OF_WEEK[nominalDate.getDay()];
+          items.push({ dateKey: dKey, displayLabel: `${mIdx + 1}/${clampedDay}(${dowName})`, shifted: false });
+        } else if (businessShiftRule === 'prev') {
+          const cursor = new Date(nominalDate);
+          cursor.setDate(cursor.getDate() - 1);
+          for (let step = 0; step < 15; step++) {
+            if (isBusinessDayDate(cursor)) {
+              const dKey = formatDateKey(cursor);
+              const dowName = DAYS_OF_WEEK[cursor.getDay()];
+              adjustedCount += 1;
+              items.push({ dateKey: dKey, displayLabel: `${cursor.getMonth() + 1}/${cursor.getDate()}(${dowName})`, shifted: true });
+              break;
+            }
+            cursor.setDate(cursor.getDate() - 1);
+          }
+        } else if (businessShiftRule === 'next') {
+          const cursor = new Date(nominalDate);
+          cursor.setDate(cursor.getDate() + 1);
+          for (let step = 0; step < 15; step++) {
+            if (isBusinessDayDate(cursor)) {
+              const dKey = formatDateKey(cursor);
+              const dowName = DAYS_OF_WEEK[cursor.getDay()];
+              adjustedCount += 1;
+              items.push({ dateKey: dKey, displayLabel: `${cursor.getMonth() + 1}/${cursor.getDate()}(${dowName})`, shifted: true });
+              break;
+            }
+            cursor.setDate(cursor.getDate() + 1);
+          }
+        } else {
+          adjustedCount += 1;
+        }
+      }
+    });
+
+    const uniqueDateKeys = Array.from(new Set(items.map((it) => it.dateKey))).sort();
+    return { items, dateKeys: uniqueDateKeys, adjustedCount };
+  }, [
+    anchorDate,
+    businessDayScope,
+    businessDayMode,
+    businessTargetDay,
+    businessShiftRule,
+    effectiveHolidays
+  ]);
+
+  const handleApplyBusinessDayDates = () => {
+    const { dateKeys, adjustedCount } = businessDayPreviewResult;
+    if (dateKeys.length === 0) {
+      showToast('선택한 영업일 조건에 해당하는 날짜가 없습니다.');
+      return;
+    }
+    setSelectedDateKeys(dateKeys);
+    setIsMultiSelectMode(true);
+
+    const shiftInfo =
+      adjustedCount > 0 ? ` (주말·공휴일 보정 ${adjustedCount}건 자동 반영됨)` : '';
+    showToast(`영업일 기준 ${dateKeys.length}개 날짜가 일괄 등록 대상으로 적용되었습니다!${shiftInfo}`);
+  };
+
+  // ============================================================================
+  // 6. 네비게이션 및 업무 CRUD
+  // ============================================================================
+  const handleNavigate = (direction) => {
+    const next = new Date(anchorDate);
+    if (viewMode === '3week') {
+      next.setDate(next.getDate() + direction * 7);
+    } else if (viewMode === 'month') {
+      next.setMonth(next.getMonth() + direction);
+    } else {
+      next.setFullYear(next.getFullYear() + direction);
+    }
+    setAnchorDate(next);
+  };
+
+  const scrollToMonthSection = (monthIdx) => {
+    const el = document.getElementById(`year-month-section-${monthIdx}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const toggleTaskComplete = (taskId, e) => {
+    if (e) e.stopPropagation();
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
+    }));
+  };
+
+  const deleteTask = (taskId, e) => {
+    if (e) e.stopPropagation();
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: prev.tasks.filter((t) => t.id !== taskId)
+    }));
+    showToast('업무가 삭제되었습니다. (↩ 버튼으로 복원 가능)');
+  };
+
+  const saveEditedTask = (taskId) => {
+    if (!editingTaskTitle.trim()) return;
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) =>
+        t.id === taskId
+          ? { ...t, title: editingTaskTitle.trim(), category: editingTaskCategory }
+          : t
+      )
+    }));
+    setEditingTaskId(null);
+    setEditingTaskTitle('');
+    showToast('업무 내용과 분류가 수정되었습니다.');
+  };
+
+  // ============================================================================
+  // 7. 업무 분류(카테고리) 편집
+  // ============================================================================
+  const handleRenameCategory = (catId, nextLabel) => {
+    commitCalendarChange((prev) => ({
+      ...prev,
+      categories: prev.categories.map((c) => (c.id === catId ? { ...c, label: nextLabel } : c))
+    }));
+  };
+
+  const handleChangeCategoryColor = (catId, colorKey) => {
+    commitCalendarChange((prev) => ({
+      ...prev,
+      categories: prev.categories.map((c) => (c.id === catId ? { ...c, colorKey } : c))
+    }));
+  };
+
+  const handleAddCategory = (e) => {
+    e.preventDefault();
+    const trimmed = newCategoryLabel.trim();
+    if (!trimmed) return;
+    const newCat = {
+      id: `cat-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      label: trimmed,
+      colorKey: newCategoryColorKey
+    };
+    commitCalendarChange((prev) => ({
+      ...prev,
+      categories: [...prev.categories, newCat]
+    }));
+    setNewCategoryLabel('');
+    showToast(`새 업무 분류 "${trimmed}"이(가) 추가되었습니다.`);
+  };
+
+  const handleDeleteCategory = (catId) => {
+    if (categories.length <= 1) {
+      showToast('최소 1개 이상의 업무 분류는 유지되어야 합니다.');
+      return;
+    }
+    const target = categories.find((c) => c.id === catId);
+    const fallback = categories.find((c) => c.id !== catId);
+    if (!target || !fallback) return;
+
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((t) => (t.category === catId ? { ...t, category: fallback.id } : t)),
+      recurringTemplates: prev.recurringTemplates.map((tpl) =>
+        tpl.category === catId ? { ...tpl, category: fallback.id } : tpl
+      ),
+      categories: prev.categories.filter((c) => c.id !== catId)
+    }));
+
+    if (selectedCategory === catId) setSelectedCategory('all');
+    if (modalCategory === catId) setModalCategory(fallback.id);
+    if (newTplCategory === catId) setNewTplCategory(fallback.id);
+
+    showToast(`"${target.label}" 분류가 삭제되어 기존 일정은 "${fallback.label}"(으)로 이동되었습니다.`);
+  };
+
+  const handleResetCategories = () => {
+    commitCalendarChange((prev) => ({
+      ...prev,
+      categories: INITIAL_CATEGORIES
+    }));
+    showToast('기본 업무 분류(회계, 인사, 총무, 사무, 긴급, 자금)로 초기화되었습니다.');
+  };
+
+  const copySingleTaskToClipboard = (task, e) => {
+    if (e) e.stopPropagation();
+    setClipboardTasks([{ title: task.title, category: task.category }]);
+    showToast(`"${task.title}" 업무가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
+  };
+
+  const copyAllDayTasksToClipboard = (dateKey, dayTasksList, e) => {
+    if (e) e.stopPropagation();
+    if (!dayTasksList || dayTasksList.length === 0) return;
+    setClipboardTasks(dayTasksList.map((t) => ({ title: t.title, category: t.category })));
+    showToast(`${dateKey}의 일정 전체(${dayTasksList.length}건)가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
+  };
+
+  const pasteClipboardToDate = (dateKey, e) => {
+    if (e) e.stopPropagation();
+    if (clipboardTasks.length === 0) return;
+    const newItems = clipboardTasks.map((item, idx) => ({
+      id: `task-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      date: dateKey,
+      title: item.title,
+      category: item.category,
+      completed: false
+    }));
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, ...newItems]
+    }));
+    showToast(`${dateKey} 일정에 ${newItems.length}건의 업무를 붙여넣었습니다.`);
+  };
+
+  const handleDirectCopyToDates = (task, targetDates) => {
+    if (!targetDates || targetDates.length === 0) return;
+    const newItems = targetDates.map((dKey, idx) => ({
+      id: `task-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      date: dKey,
+      title: task.title,
+      category: task.category,
+      completed: false
+    }));
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, ...newItems]
+    }));
+    setCopyTargetTask(null);
+    showToast(`"${task.title}" 업무를 ${targetDates.length}개 날짜에 복사 등록했습니다.`);
+  };
+
+  const handleModalBatchAdd = (e) => {
+    e.preventDefault();
+    if (!modalBatchInput.trim() || !modalDate) return;
+    const lines = modalBatchInput
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return;
+
+    const newItems = lines.map((line, idx) => ({
+      id: `task-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      date: modalDate,
+      title: line,
+      category: modalCategory,
+      completed: false
+    }));
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, ...newItems]
+    }));
+    setModalBatchInput('');
+    showToast(`${modalDate}에 ${newItems.length}건의 업무가 등록되었습니다.`);
+  };
+
+  // ============================================================================
+  // 8. 반복 업무 템플릿 & 다중 날짜 일괄 등록
+  // ============================================================================
+  const toggleTemplateSelection = (tplId) => {
+    setSelectedTemplateIds((prev) =>
+      prev.includes(tplId) ? prev.filter((id) => id !== tplId) : [...prev, tplId]
+    );
+  };
+
+  const handleAddTemplate = (e) => {
+    e.preventDefault();
+    if (!newTplTitle.trim()) return;
+    const newTpl = {
+      id: `tpl-${Date.now()}`,
+      title: newTplTitle.trim(),
+      category: newTplCategory
+    };
+    commitCalendarChange((prev) => ({
+      ...prev,
+      recurringTemplates: [...prev.recurringTemplates, newTpl]
+    }));
+    setSelectedTemplateIds((prev) => [...prev, newTpl.id]);
+    setNewTplTitle('');
+    showToast('새 반복 업무 템플릿이 추가되었습니다.');
+  };
+
+  const handleDeleteTemplate = (tplId, e) => {
+    e.stopPropagation();
+    commitCalendarChange((prev) => ({
+      ...prev,
+      recurringTemplates: prev.recurringTemplates.filter((t) => t.id !== tplId)
+    }));
+    setSelectedTemplateIds((prev) => prev.filter((id) => id !== tplId));
+  };
+
+  const startEditTemplate = (tpl, e) => {
+    e.stopPropagation();
+    setEditingTplId(tpl.id);
+    setEditingTplTitle(tpl.title);
+    setEditingTplCategory(tpl.category);
+  };
+
+  const saveEditTemplate = (tplId, e) => {
+    if (e) e.stopPropagation();
+    if (!editingTplTitle.trim()) return;
+    commitCalendarChange((prev) => ({
+      ...prev,
+      recurringTemplates: prev.recurringTemplates.map((t) =>
+        t.id === tplId
+          ? { ...t, title: editingTplTitle.trim(), category: editingTplCategory }
+          : t
+      )
+    }));
+    setEditingTplId(null);
+    showToast('반복 업무 템플릿이 수정되었습니다.');
+  };
+
+  const toggleDateSelection = (dateKey) => {
+    setSelectedDateKeys((prev) =>
+      prev.includes(dateKey) ? prev.filter((k) => k !== dateKey) : [...prev, dateKey].sort()
+    );
+  };
+
+  const handleBatchInsertRecurringTasks = () => {
+    const activeTemplates = templates.filter((t) => selectedTemplateIds.includes(t.id));
+    if (activeTemplates.length === 0) {
+      showToast('반복 업무 패널에서 등록할 업무 템플릿을 1개 이상 선택해주세요.');
+      return;
+    }
+    if (selectedDateKeys.length === 0) {
+      setIsMultiSelectMode(true);
+      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+        setIsRightSidebarOpen(false);
+      }
+      showToast('요일/영업일 날짜 적용하기 버튼을 누르거나 달력에서 날짜를 직접 선택해주세요.');
+      return;
+    }
+
+    const created = [];
+    selectedDateKeys.forEach((dateKey, dIdx) => {
+      activeTemplates.forEach((tpl, tIdx) => {
+        created.push({
+          id: `task-${Date.now()}-${dIdx}-${tIdx}-${Math.random().toString(36).slice(2, 6)}`,
+          date: dateKey,
+          title: tpl.title,
+          category: tpl.category,
+          completed: false
+        });
+      });
+    });
+
+    commitCalendarChange((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, ...created]
+    }));
+    showToast(
+      `${selectedDateKeys.length}개 날짜에 ${activeTemplates.length}종 반복 업무(총 ${created.length}건)를 일괄 등록했습니다!`
+    );
+    setSelectedDateKeys([]);
+    setIsMultiSelectMode(false);
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsRightSidebarOpen(false);
+    }
+  };
+
+  const headerPeriodText = useMemo(() => {
+    if (viewMode === 'year') {
+      return `${anchorDate.getFullYear()}년 전체 연간 (1월~12월)`;
+    }
+    if (calendarWeeks.length === 0) return '';
+    const first = calendarWeeks[0][0];
+    const last = calendarWeeks[calendarWeeks.length - 1][6];
+    if (viewMode === 'month') {
+      return `${anchorDate.getFullYear()}년 ${anchorDate.getMonth() + 1}월`;
+    }
+    return `${first.getFullYear()}년 ${first.getMonth() + 1}/${first.getDate()} — ${last.getMonth() + 1}/${last.getDate()}`;
+  }, [calendarWeeks, viewMode, anchorDate]);
+
+  // ============================================================================
+  // 9. 공통 7열 달력 그리드 렌더링
+  // ============================================================================
+  const renderCalendarGrid = (weeks, options = {}) => {
+    const {
+      targetMonthIndex = null,
+      showWeekHorizonBanners = false,
+      compactCellHeight = false
+    } = options;
+
+    return (
+      <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 shadow-xs overflow-x-auto">
+        <div className="min-w-[700px] lg:min-w-[920px]">
+          <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/90">
+            {DAYS_OF_WEEK.map((dayName, idx) => (
+              <div
+                key={dayName}
+                className={`py-1.5 sm:py-2 px-1.5 sm:px-3 text-center text-[11px] sm:text-xs font-extrabold border-r last:border-r-0 border-slate-200 ${
+                  idx === 0 ? 'text-rose-600' : idx === 6 ? 'text-blue-600' : 'text-slate-700'
+                }`}
+              >
+                {dayName}
+                <span className="hidden sm:inline">요일</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="divide-y divide-slate-200">
+            {weeks.map((weekDays, wIdx) => {
+              const horizonType = getWeekHorizonType(weekDays[0]);
+              const isThisWeek = horizonType === 'this';
+              const isLastWeek = horizonType === 'last';
+              const isNextWeek = horizonType === 'next';
+
+              let weekBadgeText = null;
+              let weekBadgeStyle = '';
+              if (showWeekHorizonBanners) {
+                if (wIdx === 0) {
+                  weekBadgeText = '전주 (지난주)';
+                  weekBadgeStyle = 'bg-slate-200 text-slate-700';
+                } else if (wIdx === 1) {
+                  weekBadgeText = '이번주 (현재 집중 주간)';
+                  weekBadgeStyle = 'bg-indigo-600 text-white';
+                } else if (wIdx === 2) {
+                  weekBadgeText = '다음주 (예정 주간)';
+                  weekBadgeStyle = 'bg-sky-600 text-white';
+                }
+              } else if (isThisWeek) {
+                weekBadgeText = '이번주';
+                weekBadgeStyle = 'bg-indigo-600 text-white';
+              }
+
+              return (
+                <div
+                  key={`week-${wIdx}`}
+                  className={`relative ${
+                    isThisWeek
+                      ? 'ring-2 ring-inset ring-indigo-500 bg-indigo-50/15'
+                      : isLastWeek
+                      ? 'bg-slate-50/50'
+                      : isNextWeek
+                      ? 'bg-sky-50/15'
+                      : 'bg-white'
+                  }`}
+                >
+                  {weekBadgeText && (
+                    <div className="px-2.5 sm:px-3 py-1 border-b border-slate-200/80 flex items-center justify-between bg-white/85">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-extrabold ${weekBadgeStyle}`}
+                      >
+                        {weekBadgeText}
+                      </span>
+                      <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">
+                        {weekDays[0].getMonth() + 1}/{weekDays[0].getDate()} (일) ~{' '}
+                        {weekDays[6].getMonth() + 1}/{weekDays[6].getDate()} (토)
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-7 divide-x divide-slate-200">
+                    {weekDays.map((cellDate) => {
+                      const dateKey = formatDateKey(cellDate);
+                      const dayTasks = tasksByDate[dateKey] || [];
+                      const holidayInfo = effectiveHolidays[dateKey] || null;
+                      const leaveInfo = leaves[dateKey] || null;
+                      const leaveMeta = leaveInfo ? LEAVE_TYPES[leaveInfo.type] : null;
+                      const isToday = dateKey === todayKey;
+                      const isSelectedDate = selectedDateKeys.includes(dateKey);
+                      const isDimmedByLeaveFilter = onlyLeaveDatesFilter && !leaveMeta;
+                      const isCurrentMonth =
+                        targetMonthIndex === null ? true : cellDate.getMonth() === targetMonthIndex;
+                      const isCellExpanded = cellHeightMode === 'expand' && !collapsedCells[dateKey];
+
+                      const dayOfWeek = cellDate.getDay();
+                      const isRedDay = dayOfWeek === 0 || Boolean(holidayInfo);
+                      const dateNumberColor = isToday
+                        ? 'bg-indigo-600 text-white'
+                        : isRedDay
+                        ? 'text-rose-600'
+                        : dayOfWeek === 6
+                        ? 'text-blue-600'
+                        : 'text-slate-800';
+
+                      const minSquareHeightClass =
+                        viewMode === '3week'
+                          ? 'min-h-[165px] sm:min-h-[195px]'
+                          : compactCellHeight
+                          ? 'min-h-[135px] sm:min-h-[155px]'
+                          : 'min-h-[150px] sm:min-h-[175px]';
+
+                      const fixedScrollHeightClass =
+                        viewMode === '3week'
+                          ? 'h-[180px] sm:h-[210px]'
+                          : compactCellHeight
+                          ? 'h-[145px] sm:h-[165px]'
+                          : 'h-[160px] sm:h-[185px]';
+
+                      return (
+                        <div
+                          key={dateKey}
+                          onClick={() => {
+                            if (isMultiSelectMode) {
+                              toggleDateSelection(dateKey);
+                            }
+                          }}
+                          className={`group relative flex flex-col p-1.5 sm:p-2 transition-all ${
+                            isCellExpanded ? minSquareHeightClass : fixedScrollHeightClass
+                          } ${isDimmedByLeaveFilter ? 'opacity-30' : ''} ${
+                            isSelectedDate
+                              ? 'bg-amber-50/90 ring-2 ring-inset ring-amber-500'
+                              : isToday
+                              ? 'bg-indigo-50/40'
+                              : leaveMeta
+                              ? leaveMeta.cellTint
+                              : holidayInfo
+                              ? 'bg-rose-50/45 hover:bg-rose-50/75'
+                              : !isCurrentMonth
+                              ? 'bg-slate-100/65 opacity-70'
+                              : 'hover:bg-slate-50/80'
+                          } ${isMultiSelectMode ? 'cursor-pointer' : ''}`}
+                        >
+                          <div className="flex items-start justify-between gap-0.5 sm:gap-1 mb-1 sm:mb-1.5 shrink-0">
+                            <div className="flex items-center gap-1 flex-wrap min-w-0">
+                              {isMultiSelectMode && (
+                                <span
+                                  className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 ${
+                                    isSelectedDate
+                                      ? 'bg-amber-500 border-amber-500 text-white'
+                                      : 'bg-white border-slate-300'
+                                  }`}
+                                >
+                                  {isSelectedDate && <Icon name="check" className="w-3 h-3" />}
+                                </span>
+                              )}
+                              <span
+                                className={`inline-flex items-center justify-center min-w-[20px] sm:min-w-[24px] h-5 sm:h-6 px-1 sm:px-1.5 rounded-full text-[11px] sm:text-xs font-extrabold shrink-0 ${dateNumberColor}`}
+                              >
+                                {cellDate.getDate() === 1
+                                  ? `${cellDate.getMonth() + 1}/1`
+                                  : cellDate.getDate()}
+                              </span>
+                              {holidayInfo && (
+                                <span
+                                  className="text-[9px] sm:text-[10px] font-extrabold text-rose-700 bg-rose-100/90 border border-rose-200 px-1 py-0.5 rounded leading-tight break-words"
+                                  title={`${holidayInfo.name}${
+                                    holidayInfo.source === 'custom' ? ' (수동 지정)' : ' (대한민국 공휴일)'
+                                  }`}
+                                >
+                                  {holidayInfo.name}
+                                </span>
+                              )}
+                              {leaveMeta && (
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setModalDate(dateKey);
+                                  }}
+                                  className={`inline-flex items-center gap-0.5 text-[9px] sm:text-[10px] font-extrabold border px-1.5 py-0.5 rounded cursor-pointer shadow-2xs ${leaveMeta.badgeClass}`}
+                                  title={`${leaveMeta.label} (${leaveMeta.deduction}일 차감)${
+                                    leaveInfo.memo ? ` - ${leaveInfo.memo}` : ''
+                                  }`}
+                                >
+                                  <span>{leaveMeta.emoji}</span>
+                                  <span>{leaveMeta.shortLabel}</span>
+                                </span>
+                              )}
+                              {isToday && (
+                                <span className="hidden sm:inline-block text-[10px] font-extrabold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded shrink-0">
+                                  TODAY
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                              {dayTasks.length > 0 && (
+                                <>
+                                  <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 bg-slate-100 px-1 sm:px-1.5 py-0.5 rounded">
+                                    {dayTasks.length}건
+                                  </span>
+                                  <button
+                                    onClick={(e) => copyAllDayTasksToClipboard(dateKey, dayTasks, e)}
+                                    className="opacity-80 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-indigo-100 text-slate-500 hover:text-indigo-700 transition-opacity"
+                                    title={`이 날짜의 일정 전체(${dayTasks.length}건) 복사`}
+                                  >
+                                    <Icon name="copyPlus" className="w-3 h-3" />
+                                  </button>
+                                </>
+                              )}
+
+                              {clipboardTasks.length > 0 && (
+                                <button
+                                  onClick={(e) => pasteClipboardToDate(dateKey, e)}
+                                  className="px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] sm:text-[10px] font-bold shadow-2xs"
+                                  title={`복사한 일정(${clipboardTasks.length}건: "${clipboardTasks[0].title}"${
+                                    clipboardTasks.length > 1 ? ` 외 ${clipboardTasks.length - 1}건` : ''
+                                  })을 이 날짜에 붙여넣기`}
+                                >
+                                  붙여넣기
+                                </button>
+                              )}
+
+                              {dayTasks.length >= 3 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCollapsedCells((prev) => ({
+                                      ...prev,
+                                      [dateKey]: !prev[dateKey]
+                                    }));
+                                  }}
+                                  className="p-1 rounded hover:bg-slate-200 text-slate-500"
+                                  title={isCellExpanded ? '칸 높이 고정 접기' : '칸 펼쳐서 모두 보기'}
+                                >
+                                  <Icon name={isCellExpanded ? 'compress' : 'expand'} className="w-3 h-3" />
+                                </button>
+                              )}
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setModalDate(dateKey);
+                                  setModalBatchInput('');
+                                }}
+                                className="p-1 rounded bg-slate-100 hover:bg-indigo-600 text-slate-600 hover:text-white transition-colors"
+                                title="이 날짜에 업무 추가 및 전체 관리"
+                              >
+                                <Icon name="plus" className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div
+                            className={`flex-1 space-y-1 pr-0.5 ${
+                              isCellExpanded ? '' : 'overflow-y-auto custom-scrollbar'
+                            }`}
+                          >
+                            {dayTasks.length === 0 ? (
+                              <div
+                                onClick={(e) => {
+                                  if (!isMultiSelectMode) {
+                                    e.stopPropagation();
+                                    setModalDate(dateKey);
+                                  }
+                                }}
+                                className="h-full min-h-[32px] flex items-center justify-center text-[10px] sm:text-[11px] text-slate-300 hover:text-slate-400 cursor-pointer"
+                              >
+                                + 추가
+                              </div>
+                            ) : (
+                              dayTasks.map((task) => {
+                                const cat = getCategoryInfo(task.category);
+                                const isHighlighted =
+                                  searchQuery.trim() &&
+                                  task.title.toLowerCase().includes(searchQuery.trim().toLowerCase());
+
+                                return (
+                                  <div
+                                    key={task.id}
+                                    onClick={(e) => toggleTaskComplete(task.id, e)}
+                                    className={`group/item flex items-start justify-between gap-1 px-1.5 py-1 rounded-md border text-[10.5px] sm:text-[11px] leading-snug cursor-pointer transition-all ${
+                                      isHighlighted
+                                        ? 'ring-2 ring-amber-400 bg-amber-50 border-amber-300 text-slate-900'
+                                        : task.completed
+                                        ? 'bg-slate-50/90 border-slate-200/80 text-slate-400'
+                                        : `${cat.bg} ${cat.border} ${cat.text} hover:brightness-95`
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-1 sm:gap-1.5 min-w-0 flex-1">
+                                      <span
+                                        className={`mt-0.5 w-3 h-3 sm:w-3.5 sm:h-3.5 rounded flex items-center justify-center shrink-0 border ${
+                                          task.completed
+                                            ? 'bg-slate-400 border-slate-400 text-white'
+                                            : 'bg-white border-slate-300'
+                                        }`}
+                                      >
+                                        {task.completed && <Icon name="check" className="w-2.5 h-2.5" />}
+                                      </span>
+
+                                      <div className="min-w-0 flex-1 break-words whitespace-normal">
+                                        <span
+                                          className={`inline-block mr-1 text-[9px] sm:text-[9.5px] font-extrabold px-1 rounded ${
+                                            task.completed
+                                              ? 'bg-slate-200 text-slate-500'
+                                              : 'bg-white/85 text-slate-700'
+                                          }`}
+                                        >
+                                          {cat.label}
+                                        </span>
+                                        <span
+                                          className={`font-medium ${
+                                            task.completed ? 'line-through text-slate-400' : ''
+                                          }`}
+                                        >
+                                          {task.title}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="opacity-80 sm:opacity-0 group-hover/item:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setModalDate(dateKey);
+                                          setEditingTaskId(task.id);
+                                          setEditingTaskTitle(task.title);
+                                          setEditingTaskCategory(task.category);
+                                        }}
+                                        className="p-0.5 rounded hover:bg-slate-200 text-slate-500 hover:text-slate-800"
+                                        title="업무 및 분류 수정"
+                                      >
+                                        <Icon name="edit" className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        onClick={(e) => copySingleTaskToClipboard(task, e)}
+                                        className="p-0.5 rounded hover:bg-indigo-100 text-slate-500 hover:text-indigo-700"
+                                        title="이 업무 복사하기"
+                                      >
+                                        <Icon name="copy" className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        onClick={(e) => deleteTask(task.id, e)}
+                                        className="p-0.5 rounded hover:bg-rose-100 text-slate-500 hover:text-rose-600"
+                                        title="업무 삭제"
+                                      >
+                                        <Icon name="trash" className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100/80 text-slate-900 flex flex-col font-sans overflow-x-hidden">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json,text/plain,*/*"
+        onChange={handleImportBackupFile}
+        className="hidden"
+      />
+
+      {/* 상단 헤더 & 툴바 */}
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs">
+        <div className="max-w-[1800px] mx-auto px-2.5 sm:px-5 py-2 sm:py-2.5 flex flex-col gap-2">
+          {/* 1단 */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                <Icon name="calendar" className="w-4 h-4 sm:w-5 sm:h-5" />
+              </div>
+
+              <div className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50/75 p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleSelectYear(activeYear - 1)}
+                  disabled={activeYear <= 2020}
+                  className="p-1 rounded-lg hover:bg-white text-indigo-700 disabled:opacity-40"
+                  title="이전 연도"
+                >
+                  <Icon name="chevronLeft" className="w-3.5 h-3.5" />
+                </button>
+                <select
+                  value={activeYear}
+                  onChange={(e) => handleSelectYear(e.target.value)}
+                  aria-label="연도 선택"
+                  className="px-1.5 py-0.5 text-xs sm:text-sm font-extrabold text-indigo-900 bg-transparent focus:outline-none cursor-pointer"
+                >
+                  {YEAR_OPTIONS.map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}년
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => handleSelectYear(activeYear + 1)}
+                  disabled={activeYear >= 2040}
+                  className="p-1 rounded-lg hover:bg-white text-indigo-700 disabled:opacity-40"
+                  title="다음 연도"
+                >
+                  <Icon name="chevronRight" className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <h1 className="text-sm sm:text-lg font-extrabold tracking-tight text-slate-900">
+                    {headerPeriodText}
+                  </h1>
+                  <button
+                    type="button"
+                    onClick={() => setAnchorDate(getSystemToday())}
+                    className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 shrink-0"
+                    title="오늘 날짜로 즉시 이동"
+                  >
+                    오늘 {systemToday.getMonth() + 1}/{systemToday.getDate()}(
+                    {DAYS_OF_WEEK[systemToday.getDay()]})
+                  </button>
+                </div>
+                <p className="hidden sm:block text-[11px] text-slate-500">
+                  전체 연도(2020~2040) 통합 업무 캘린더 · 구글 계정 클라우드 자동 동기화 · 영업일/요일별 일괄 등록 · 연차·반차 자동 집계
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5">
+                <button
+                  onClick={() => handleNavigate(-1)}
+                  className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600"
+                  title="이전 기간"
+                >
+                  <Icon name="chevronLeft" className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setAnchorDate(getSystemToday())}
+                  className="px-2 sm:px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-md"
+                >
+                  오늘
+                </button>
+                <button
+                  onClick={() => handleNavigate(1)}
+                  className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600"
+                  title="다음 기간"
+                >
+                  <Icon name="chevronRight" className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 sm:p-1 border border-slate-200">
+                <button
+                  onClick={() => setViewMode('3week')}
+                  className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-bold transition-all ${
+                    viewMode === '3week'
+                      ? 'bg-white text-indigo-700 shadow-2xs ring-1 ring-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon name="layers" className="w-3.5 h-3.5" />
+                  <span>3주 집중</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('month')}
+                  className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-bold transition-all ${
+                    viewMode === 'month'
+                      ? 'bg-white text-indigo-700 shadow-2xs ring-1 ring-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon name="grid" className="w-3.5 h-3.5" />
+                  <span>월간</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('year')}
+                  className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-bold transition-all ${
+                    viewMode === 'year'
+                      ? 'bg-white text-indigo-700 shadow-2xs ring-1 ring-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon name="calendarRange" className="w-3.5 h-3.5" />
+                  <span>12개월 전체</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 2단: 기능 버튼 */}
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+            {/* 되돌리기 / 다시 실행 */}
+            <div className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 p-0.5 gap-0.5 shrink-0 shadow-2xs">
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={undoStack.length === 0}
+                aria-label="되돌리기"
+                title={
+                  undoStack.length > 0
+                    ? `되돌리기 (Ctrl+Z · ${undoStack.length}단계 가능)`
+                    : '되돌리기 (Ctrl+Z)'
+                }
+                className={`inline-flex items-center justify-center gap-1 min-w-[32px] px-2 py-1 rounded-md text-xs sm:text-sm font-extrabold transition-all ${
+                  undoStack.length > 0
+                    ? 'bg-white text-slate-800 hover:bg-indigo-50 hover:text-indigo-700 shadow-2xs cursor-pointer'
+                    : 'text-slate-400 opacity-55 cursor-not-allowed'
+                }`}
+              >
+                <span>↩</span>
+                {undoStack.length > 0 && (
+                  <span className="px-1 py-0.2 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-extrabold leading-none">
+                    {undoStack.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRedo}
+                disabled={redoStack.length === 0}
+                aria-label="다시 실행"
+                title={
+                  redoStack.length > 0
+                    ? `다시 실행 (Ctrl+Y · ${redoStack.length}단계 가능)`
+                    : '다시 실행 (Ctrl+Y)'
+                }
+                className={`inline-flex items-center justify-center gap-1 min-w-[32px] px-2 py-1 rounded-md text-xs sm:text-sm font-extrabold transition-all ${
+                  redoStack.length > 0
+                    ? 'bg-white text-slate-800 hover:bg-indigo-50 hover:text-indigo-700 shadow-2xs cursor-pointer'
+                    : 'text-slate-400 opacity-55 cursor-not-allowed'
+                }`}
+              >
+                <span>↪</span>
+                {redoStack.length > 0 && (
+                  <span className="px-1 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px] font-extrabold leading-none">
+                    {redoStack.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* ☁️ 구글 로그인 / 동기화 상태 */}
+            {!FB ? (
+              <span className="px-2.5 py-1.5 rounded-lg border bg-rose-50 text-rose-700 border-rose-200 text-[11px] sm:text-xs font-bold shrink-0">
+                ⚠️ 동기화 모듈 로드 실패 (새로고침)
+              </span>
+            ) : authUser ? (
+              <div className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 p-0.5 gap-0.5 shrink-0 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setSyncNonce((n) => n + 1)}
+                  title={`${authUser.email || '구글 계정'}으로 동기화 중 (누르면 지금 동기화)`}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold hover:bg-amber-100 ${
+                    syncStatus === 'error' ? 'text-rose-700' : 'text-amber-900'
+                  }`}
+                >
+                  <span>{syncStatus === 'error' ? '⚠️' : syncStatus === 'saved' ? '☁️' : '🔄'}</span>
+                  <span>{syncLabel}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="px-2 py-1 rounded-md bg-white hover:bg-rose-50 text-slate-600 text-[11px] font-bold"
+                >
+                  로그아웃
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={!authReady}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-slate-800 text-white border-slate-800 hover:bg-slate-900 text-[11px] sm:text-xs font-extrabold shrink-0 shadow-2xs disabled:opacity-60"
+                title="구글 계정으로 로그인하면 모든 기기에서 일정이 자동 동기화됩니다"
+              >
+                <span>☁️</span>
+                <span>{authReady ? '구글 로그인 (기기간 동기화)' : '확인 중...'}</span>
+              </button>
+            )}
+
+            {/* 백업 / 복구 */}
+            <div className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50/70 p-0.5 gap-0.5 shrink-0">
+              <button
+                onClick={handleExportBackup}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold shadow-2xs"
+                title="백업 파일(JSON)을 내려받고 텍스트로도 복사할 수 있습니다"
+              >
+                <Icon name="download" className="w-3.5 h-3.5" />
+                <span>데이터 백업</span>
+              </button>
+              <button
+                onClick={() => {
+                  setRestoreTab('paste');
+                  setIsRestoreModalOpen(true);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white hover:bg-emerald-100 text-emerald-800 text-[11px] sm:text-xs font-bold"
+              >
+                <Icon name="upload" className="w-3.5 h-3.5" />
+                <span>백업 복구</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => {
+                setCollapsedCells({});
+                setCellHeightMode((prev) => (prev === 'expand' ? 'scroll' : 'expand'));
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[11px] sm:text-xs font-bold shrink-0 transition-colors ${
+                cellHeightMode === 'expand'
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Icon name={cellHeightMode === 'expand' ? 'compress' : 'expand'} className="w-3.5 h-3.5" />
+              <span>{cellHeightMode === 'expand' ? '모든 칸 전체 펼침 중' : '고정 칸 높이 모드'}</span>
+            </button>
+
+            <button
+              onClick={() => setIsLeaveSummaryModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-teal-50 text-teal-900 border-teal-300 hover:bg-teal-100 text-[11px] sm:text-xs font-extrabold shrink-0 shadow-2xs"
+              title={`${activeYear}년 연차·반차 사용 내역 상세 보기 및 총 연차 설정`}
+            >
+              <span>🌴</span>
+              <span>
+                {activeYear}년 연차 사용{' '}
+                <strong className="text-teal-700">{leaveStats.usedDays}일</strong> · 잔여{' '}
+                <strong className={leaveStats.remainingDays < 0 ? 'text-rose-600' : 'text-indigo-700'}>
+                  {leaveStats.remainingDays}일
+                </strong>
+              </span>
+            </button>
+
+            <button
+              onClick={() => syncKoreanHolidays(false)}
+              disabled={isSyncingHolidays}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 text-[11px] sm:text-xs font-bold shrink-0 disabled:opacity-60"
+            >
+              <Icon name="refresh" className={`w-3.5 h-3.5 ${isSyncingHolidays ? 'animate-spin' : ''}`} />
+              <span>
+                {isSyncingHolidays
+                  ? '동기화중...'
+                  : lastHolidaySyncTime
+                  ? `공휴일 연동됨(${lastHolidaySyncTime})`
+                  : '공휴일 연동'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setIsRightSidebarOpen((prev) => !prev)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-[11px] sm:text-xs font-bold shrink-0 transition-colors ${
+                isRightSidebarOpen
+                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Icon name="repeat" className="w-3.5 h-3.5" />
+              <span>요일·반복 일괄등록</span>
+            </button>
+          </div>
+
+          {/* 3단: 요약 + 검색 + 분류 필터 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+            {viewMode === 'year' ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="px-2.5 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] sm:text-xs">
+                  <span className="text-indigo-700 font-bold">{yearStats.year}년 전체: </span>
+                  <span className="font-extrabold text-indigo-950">
+                    완료 {yearStats.completed} / 총 {yearStats.total}건 ({yearStats.rate}%)
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <div className="px-2 py-1 rounded-md bg-slate-100 border border-slate-200 text-[11px] sm:text-xs shrink-0">
+                  <span className="text-slate-600 font-semibold">전주: </span>
+                  <span className="font-bold text-slate-800">
+                    {horizonStats.last.completed}/{horizonStats.last.total}건
+                  </span>
+                </div>
+                <div className="px-2 py-1 rounded-md bg-indigo-50 border border-indigo-300 text-[11px] sm:text-xs shrink-0">
+                  <span className="text-indigo-700 font-bold">이번주: </span>
+                  <span className="font-extrabold text-indigo-950">
+                    {horizonStats.this.completed}/{horizonStats.this.total}건
+                  </span>
+                </div>
+                <div className="px-2 py-1 rounded-md bg-sky-50 border border-sky-200 text-[11px] sm:text-xs shrink-0">
+                  <span className="text-sky-700 font-semibold">다음주: </span>
+                  <span className="font-bold text-sky-900">{horizonStats.next.total}건 예정</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+              {clipboardTasks.length > 0 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] sm:text-xs font-bold shadow-xs">
+                  <Icon name="clipboard" className="w-3.5 h-3.5 shrink-0" />
+                  <span className="max-w-[150px] sm:max-w-[200px] truncate">
+                    복사됨({clipboardTasks.length}건): {clipboardTasks[0].title}
+                  </span>
+                  <button
+                    onClick={() => setClipboardTasks([])}
+                    className="ml-0.5 p-0.5 rounded hover:bg-emerald-700"
+                    title="클립보드 비우기"
+                  >
+                    <Icon name="x" className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
+              <div className="relative flex-1 sm:flex-initial">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">
+                  <Icon name="search" className="w-3.5 h-3.5" />
+                </span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onFocus={() => setIsSearchDrawerOpen(true)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setIsSearchDrawerOpen(true);
+                  }}
+                  placeholder="전체 연도 업무 검색 후 복사..."
+                  className="pl-8 pr-16 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg w-full sm:w-56 focus:outline-none focus:bg-white focus:border-indigo-500"
+                />
+                <button
+                  onClick={() => setIsSearchDrawerOpen((prev) => !prev)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+                >
+                  목록({searchResults.length})
+                </button>
+
+                {isSearchDrawerOpen && (
+                  <div className="absolute right-0 mt-1.5 w-80 sm:w-96 bg-white rounded-2xl border border-slate-200 shadow-2xl z-40 overflow-hidden">
+                    <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-800">
+                        전체 업무 검색 결과 ({searchResults.length}건)
+                      </span>
+                      <button
+                        onClick={() => setIsSearchDrawerOpen(false)}
+                        className="p-1 rounded hover:bg-slate-200 text-slate-500"
+                      >
+                        <Icon name="x" className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                      {searchResults.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-slate-400">
+                          일치하는 업무가 없습니다.
+                        </div>
+                      ) : (
+                        searchResults.map((t) => {
+                          const cat = getCategoryInfo(t.category);
+                          return (
+                            <div
+                              key={t.id}
+                              className="p-2.5 hover:bg-slate-50 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div
+                                onClick={() => {
+                                  setAnchorDate(parseDateKey(t.date));
+                                  setIsSearchDrawerOpen(false);
+                                }}
+                                className="min-w-0 flex-1 cursor-pointer"
+                              >
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="font-bold text-slate-500">{t.date}</span>
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${cat.bg} ${cat.text}`}
+                                  >
+                                    {cat.label}
+                                  </span>
+                                </div>
+                                <div className="font-semibold text-slate-800 break-words">{t.title}</div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={(e) => copySingleTaskToClipboard(t, e)}
+                                  className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px]"
+                                >
+                                  복사
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setCopyTargetTask(t);
+                                    setIsSearchDrawerOpen(false);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px]"
+                                >
+                                  날짜지정복사
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200 overflow-x-auto max-w-full no-scrollbar">
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-2 py-1 rounded-md text-[11px] sm:text-xs font-semibold shrink-0 ${
+                    selectedCategory === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+                  }`}
+                >
+                  전체
+                </button>
+                {categories.map((cat) => {
+                  const style = getCategoryInfo(cat.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => setSelectedCategory(cat.id)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] sm:text-xs font-semibold shrink-0 ${
+                        selectedCategory === cat.id ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${style.dot}`} />
+                      <span>{cat.label}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryInlineOpen((prev) => !prev)}
+                  className={`px-2 py-1 rounded-md text-[11px] font-extrabold shrink-0 transition-colors ${
+                    isCategoryInlineOpen
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'text-indigo-600 hover:bg-white'
+                  }`}
+                >
+                  {isCategoryInlineOpen ? '편집 닫기' : '+편집'}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setOnlyLeaveDatesFilter((prev) => !prev)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-extrabold border shrink-0 transition-all ${
+                  onlyLeaveDatesFilter
+                    ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                    : 'bg-teal-50/70 text-teal-800 border-teal-200 hover:bg-teal-100'
+                }`}
+              >
+                🌴 연차·반차만 ({leaveStats.totalEntries}일)
+              </button>
+            </div>
+          </div>
+
+          {/* 4단: 인라인 분류 편집 */}
+          {isCategoryInlineOpen && (
+            <div className="p-3 rounded-xl bg-slate-50 border border-indigo-200/80 space-y-2.5 shadow-inner">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Icon name="tag" className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-xs font-extrabold text-slate-800">
+                    업무 분류 직접 편집 (이름·색상 변경 및 추가/삭제)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetCategories}
+                    className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline"
+                  >
+                    기본 6종 초기화
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryInlineOpen(false)}
+                    className="px-2.5 py-0.5 rounded-md bg-slate-800 text-white text-[11px] font-bold"
+                  >
+                    완료
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {categories.map((cat) => {
+                  const style = getCategoryInfo(cat.id);
+                  const usageCount = tasks.filter((t) => t.category === cat.id).length;
+
+                  return (
+                    <div key={cat.id} className="p-2 rounded-lg bg-white border border-slate-200 space-y-1.5">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[11px] font-extrabold shrink-0 border ${style.bg} ${style.text} ${style.border}`}
+                        >
+                          {cat.label || '분류명'}
+                        </span>
+                        <input
+                          type="text"
+                          value={cat.label}
+                          onChange={(e) => handleRenameCategory(cat.id, e.target.value)}
+                          placeholder="분류명 입력..."
+                          className="flex-1 min-w-0 px-2 py-0.5 text-xs font-bold bg-slate-50 focus:bg-white border border-slate-300 rounded focus:outline-none focus:border-indigo-500"
+                        />
+                        <span className="text-[10px] font-semibold text-slate-400 shrink-0">{usageCount}건</span>
+                        {categories.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(cat.id)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                            title="이 분류 삭제"
+                          >
+                            <Icon name="trash" className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {Object.values(COLOR_PALETTES).map((pal) => {
+                          const isSelectedColor = cat.colorKey === pal.key;
+                          return (
+                            <button
+                              key={pal.key}
+                              type="button"
+                              onClick={() => handleChangeCategoryColor(cat.id, pal.key)}
+                              title={`${pal.name} 색상`}
+                              className={`w-4 h-4 rounded-full flex items-center justify-center border transition-transform ${pal.dot} ${
+                                isSelectedColor
+                                  ? 'ring-2 ring-offset-1 ring-slate-800 scale-110 border-white'
+                                  : 'opacity-75 hover:opacity-100 border-transparent'
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <form
+                onSubmit={handleAddCategory}
+                className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/80"
+              >
+                <span className="text-[11px] font-extrabold text-slate-700 mr-1">+ 새 분류 추가:</span>
+                <select
+                  value={newCategoryColorKey}
+                  onChange={(e) => setNewCategoryColorKey(e.target.value)}
+                  className="px-2 py-1 text-xs font-bold border border-slate-300 rounded-lg bg-white text-slate-700 focus:outline-none"
+                >
+                  {Object.values(COLOR_PALETTES).map((pal) => (
+                    <option key={pal.key} value={pal.key}>
+                      {pal.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={newCategoryLabel}
+                  onChange={(e) => setNewCategoryLabel(e.target.value)}
+                  placeholder="예: 세무, 감사, 법무, 계약..."
+                  className="flex-1 min-w-[140px] max-w-xs px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold"
+                >
+                  추가
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* 메인 본문 */}
+      <div className="flex-1 max-w-[1800px] w-full mx-auto px-2 sm:px-5 py-3 sm:py-4 flex flex-col lg:flex-row gap-4 items-start">
+        <div className="flex-1 w-full min-w-0">
+          {viewMode === 'year' ? (
+            <div className="space-y-5 sm:space-y-6">
+              <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 p-2.5 sm:p-3 shadow-2xs flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                  <span className="text-[11px] sm:text-xs font-extrabold text-slate-600 mr-1">
+                    {activeYear}년 월별 이동:
+                  </span>
+                  {fullYearMonthsData.map(({ monthIdx, label }) => {
+                    const count = yearStats.monthCounts[monthIdx] || 0;
+                    const isCurrentMonth =
+                      anchorDate.getFullYear() === systemToday.getFullYear() &&
+                      monthIdx === systemToday.getMonth();
+                    return (
+                      <button
+                        key={monthIdx}
+                        onClick={() => scrollToMonthSection(monthIdx)}
+                        className={`px-2 sm:px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold border transition-all flex items-center gap-1 ${
+                          isCurrentMonth
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                            : 'bg-slate-50 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border-slate-200'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        <span
+                          className={`text-[10px] px-1 rounded ${
+                            isCurrentMonth ? 'bg-indigo-500 text-white' : 'bg-slate-200/80 text-slate-600'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                >
+                  <Icon name="arrowUp" className="w-3.5 h-3.5" />
+                  <span>맨 위로</span>
+                </button>
+              </div>
+
+              {fullYearMonthsData.map(({ year, monthIdx, label, weeks }) => {
+                const mTotal = yearStats.monthCounts[monthIdx] || 0;
+                const mDone = yearStats.monthCompleted[monthIdx] || 0;
+                const isThisMonth =
+                  year === systemToday.getFullYear() && monthIdx === systemToday.getMonth();
+
+                return (
+                  <section
+                    key={`year-month-${monthIdx}`}
+                    id={`year-month-section-${monthIdx}`}
+                    className="scroll-mt-36 space-y-2"
+                  >
+                    <div
+                      className={`px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
+                        isThisMonth
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white text-slate-900 border-slate-200 shadow-2xs'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-sm sm:text-base font-extrabold">
+                          {year}년 {label}
+                        </h2>
+                        {isThisMonth && (
+                          <span className="px-2 py-0.5 rounded-md bg-white text-indigo-700 text-[10px] sm:text-[11px] font-extrabold">
+                            이번달
+                          </span>
+                        )}
+                        <span
+                          className={`text-[11px] sm:text-xs font-bold px-2 py-0.5 rounded-md ${
+                            isThisMonth ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          총 {mTotal}건 (완료 {mDone}건)
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setAnchorDate(new Date(year, monthIdx, 1));
+                          setViewMode('month');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-colors ${
+                          isThisMonth
+                            ? 'bg-indigo-500 hover:bg-indigo-400 text-white'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {label} 단독 보기
+                      </button>
+                    </div>
+
+                    {renderCalendarGrid(weeks, {
+                      targetMonthIndex: monthIdx,
+                      showWeekHorizonBanners: false,
+                      compactCellHeight: true
+                    })}
+                  </section>
+                );
+              })}
+            </div>
+          ) : (
+            renderCalendarGrid(calendarWeeks, {
+              targetMonthIndex: viewMode === 'month' ? anchorDate.getMonth() : null,
+              showWeekHorizonBanners: viewMode === '3week',
+              compactCellHeight: false
+            })
+          )}
+        </div>
+
+        {/* 우측 반복·요일별 일괄 등록 패널 */}
+        {isRightSidebarOpen && (
+          <>
+            <div
+              onClick={() => setIsRightSidebarOpen(false)}
+              className="fixed inset-0 z-40 bg-slate-900/45 backdrop-blur-xs lg:hidden"
+            />
+            <aside className="fixed inset-y-0 right-0 z-50 w-[90vw] max-w-[380px] bg-white shadow-2xl p-4 overflow-y-auto lg:static lg:z-auto lg:w-[340px] xl:w-[360px] lg:shrink-0 lg:rounded-2xl lg:border lg:border-slate-200 lg:shadow-xs lg:sticky lg:top-32 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <Icon name="repeat" className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-extrabold text-slate-900">반복·요일별 일괄 등록</h2>
+                    <p className="text-[11px] text-slate-500">
+                      {activeYear}년 기준 영업일/요일(공휴일 제외) 일괄 입력
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsRightSidebarOpen(false)}
+                  className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <Icon name="x" className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Step 1: 반복 업무 템플릿 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-700">
+                    1. 반복 업무 선택 ({selectedTemplateIds.length}개)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() =>
+                        setSelectedTemplateIds(
+                          selectedTemplateIds.length === templates.length ? [] : templates.map((t) => t.id)
+                        )
+                      }
+                      className="text-[11px] font-bold text-indigo-600 hover:underline"
+                    >
+                      {selectedTemplateIds.length === templates.length ? '전체 해제' : '전체 선택'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 max-h-[215px] overflow-y-auto custom-scrollbar pr-1">
+                  {templates.map((tpl) => {
+                    const cat = getCategoryInfo(tpl.category);
+                    const checked = selectedTemplateIds.includes(tpl.id);
+                    const isEditingTpl = editingTplId === tpl.id;
+
+                    if (isEditingTpl) {
+                      return (
+                        <div
+                          key={tpl.id}
+                          className="p-2 rounded-xl border border-indigo-400 bg-indigo-50/60 space-y-1.5"
+                        >
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={editingTplCategory}
+                              onChange={(e) => setEditingTplCategory(e.target.value)}
+                              className="px-1.5 py-1 text-[11px] border border-slate-300 rounded-md bg-white font-bold text-slate-700"
+                            >
+                              {categories.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={editingTplTitle}
+                              onChange={(e) => setEditingTplTitle(e.target.value)}
+                              className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-300 rounded-md bg-white"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="flex justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => saveEditTemplate(tpl.id, e)}
+                              className="px-2 py-0.5 rounded bg-indigo-600 text-white text-[11px] font-bold"
+                            >
+                              저장
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingTplId(null);
+                              }}
+                              className="px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-[11px]"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={tpl.id}
+                        onClick={() => toggleTemplateSelection(tpl.id)}
+                        className={`group flex items-center justify-between gap-2 p-2 rounded-xl border text-xs cursor-pointer transition-all ${
+                          checked
+                            ? 'bg-indigo-50/80 border-indigo-300 text-slate-900 shadow-2xs'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span
+                            className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                              checked ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300'
+                            }`}
+                          >
+                            {checked && <Icon name="check" className="w-3 h-3" />}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${cat.bg} ${cat.text}`}>
+                            {cat.label}
+                          </span>
+                          <span className="font-semibold break-words">{tpl.title}</span>
+                        </div>
+
+                        <div className="opacity-80 sm:opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+                          <button
+                            onClick={(e) => startEditTemplate(tpl, e)}
+                            className="p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-700"
+                            title="템플릿 수정"
+                          >
+                            <Icon name="edit" className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteTemplate(tpl.id, e)}
+                            className="p-1 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-600"
+                            title="템플릿 삭제"
+                          >
+                            <Icon name="trash" className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <form onSubmit={handleAddTemplate} className="pt-1 flex items-center gap-1.5">
+                  <select
+                    value={newTplCategory}
+                    onChange={(e) => setNewTplCategory(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-700 focus:outline-none max-w-[80px]"
+                  >
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={newTplTitle}
+                    onChange={(e) => setNewTplTitle(e.target.value)}
+                    placeholder="새 반복 업무 추가..."
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white shrink-0"
+                    title="반복 템플릿 저장"
+                  >
+                    <Icon name="plus" className="w-4 h-4" />
+                  </button>
+                </form>
+              </div>
+
+              {/* Step 2: 영업일 기준 매월 지정 */}
+              <div className="space-y-2.5 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-indigo-950">
+                    2. 영업일 기준 매월 지정 (월초·월말·특정일)
+                  </span>
+                  <span className="text-[11px] font-bold text-indigo-600">
+                    {businessDayPreviewResult.dateKeys.length}일 추출
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-slate-600">적용 기간</label>
+                  <select
+                    value={businessDayScope}
+                    onChange={(e) => setBusinessDayScope(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500"
+                  >
+                    <option value="full_year">{activeYear}년 전체 (1월~12월)</option>
+                    <option value="h1">{activeYear}년 상반기 (1월~6월)</option>
+                    <option value="h2">{activeYear}년 하반기 (7월~12월)</option>
+                    <option value="q1">{activeYear}년 1분기 (1월~3월)</option>
+                    <option value="q2">{activeYear}년 2분기 (4월~6월)</option>
+                    <option value="q3">{activeYear}년 3분기 (7월~9월)</option>
+                    <option value="q4">{activeYear}년 4분기 (10월~12월)</option>
+                    <option value="current_month">
+                      현재 보고 있는 월 ({activeYear}년 {anchorDate.getMonth() + 1}월)
+                    </option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] font-bold text-slate-600">영업일 기준 유형 선택</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setBusinessDayMode('first_biz')}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-extrabold border transition-all ${
+                        businessDayMode === 'first_biz'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      매월 첫 영업일 (월초)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBusinessDayMode('last_biz')}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-extrabold border transition-all ${
+                        businessDayMode === 'last_biz'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      매월 마지막 영업일 (월말)
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1">
+                    {[10, 15, 20, 25].map((dayNum) => {
+                      const isActive = businessDayMode === 'nth_day' && Number(businessTargetDay) === dayNum;
+                      return (
+                        <button
+                          key={dayNum}
+                          type="button"
+                          onClick={() => {
+                            setBusinessDayMode('nth_day');
+                            setBusinessTargetDay(dayNum);
+                          }}
+                          className={`py-1.5 rounded-lg text-[11px] font-extrabold border transition-all ${
+                            isActive
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-indigo-50'
+                          }`}
+                        >
+                          매월 {dayNum}일
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setBusinessDayMode('nth_day')}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border shrink-0 ${
+                        businessDayMode === 'nth_day'
+                          ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                          : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      직접 지정: 매월
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={businessTargetDay}
+                      onFocus={() => setBusinessDayMode('nth_day')}
+                      onChange={(e) => {
+                        setBusinessDayMode('nth_day');
+                        const val = Math.max(1, Math.min(31, Number(e.target.value) || 1));
+                        setBusinessTargetDay(val);
+                      }}
+                      className="w-16 px-2 py-1 text-xs font-extrabold text-center border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-[11px] font-bold text-slate-600">일 (영업일 보정)</span>
+                  </div>
+                </div>
+
+                {businessDayMode === 'nth_day' && (
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-bold text-slate-600">
+                      주말·공휴일 겹침 시 보정 규칙
+                    </label>
+                    <select
+                      value={businessShiftRule}
+                      onChange={(e) => setBusinessShiftRule(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-[11px] font-bold border border-indigo-200 rounded-xl bg-indigo-50/50 text-indigo-950 focus:outline-none"
+                    >
+                      <option value="prev">직전 영업일로 앞당김 (급여·자금 지급 기준)</option>
+                      <option value="next">다음 영업일로 미룸 (세금·신고 마감 기준)</option>
+                      <option value="skip">영업일인 달만 선택 (주말·공휴일 제외)</option>
+                    </select>
+                  </div>
+                )}
+
+                <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-extrabold text-indigo-950">
+                    <span>계산된 실제 영업일 미리보기</span>
+                    {businessDayPreviewResult.adjustedCount > 0 && (
+                      <span className="text-[10px] font-bold text-rose-600">
+                        휴일 보정 {businessDayPreviewResult.adjustedCount}건
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                    {businessDayPreviewResult.items.length === 0 ? (
+                      <span className="text-[11px] text-slate-400">해당 영업일이 없습니다.</span>
+                    ) : (
+                      businessDayPreviewResult.items.map((it) => (
+                        <span
+                          key={it.dateKey}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                            it.shifted
+                              ? 'bg-amber-100/90 text-amber-900 border-amber-300'
+                              : 'bg-white text-indigo-800 border-indigo-200'
+                          }`}
+                        >
+                          {it.displayLabel}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleApplyBusinessDayDates}
+                  className="w-full py-2 px-3 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs"
+                >
+                  <Icon name="calendarRange" className="w-3.5 h-3.5" />
+                  <span>영업일 날짜 적용하기 ({businessDayPreviewResult.dateKeys.length}일 선택)</span>
+                </button>
+              </div>
+
+              {/* Step 3: 요일별 일괄 등록 */}
+              <div className="space-y-2.5 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-800">3. 요일별 일괄 등록 (공휴일 제외)</span>
+                  <span className="text-[11px] font-bold text-indigo-600">
+                    {weekdayPreviewResult.matchedDates.length}일 추출됨
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-bold text-slate-600">적용 기간</label>
+                  <select
+                    value={weekdayScope}
+                    onChange={(e) => setWeekdayScope(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs font-bold border border-slate-300 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-500"
+                  >
+                    <option value="3week">현재 3주 구간 (전주~다음주)</option>
+                    <option value="current_month">
+                      현재 보고 있는 월 ({activeYear}년 {anchorDate.getMonth() + 1}월)
+                    </option>
+                    <option value="q1">{activeYear}년 1분기 (1월~3월)</option>
+                    <option value="h1">{activeYear}년 상반기 (1월~6월)</option>
+                    <option value="h2">{activeYear}년 하반기 (7월~12월)</option>
+                    <option value="full_year">{activeYear}년 전체 (1월~12월)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-600">요일 복수 선택</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWeekdays([1, 2, 3, 4, 5])}
+                        className="text-[10px] font-bold text-indigo-600 hover:underline"
+                      >
+                        평일(월~금)
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWeekdays([])}
+                        className="text-[10px] font-semibold text-slate-500 hover:underline"
+                      >
+                        초기화
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {WEEKDAY_BUTTON_ORDER.map(({ dayIdx, label }) => {
+                      const active = selectedWeekdays.includes(dayIdx);
+                      const isSun = dayIdx === 0;
+                      const isSat = dayIdx === 6;
+                      return (
+                        <button
+                          key={dayIdx}
+                          type="button"
+                          onClick={() => toggleWeekdayButton(dayIdx)}
+                          className={`py-1.5 rounded-lg text-xs font-extrabold border transition-all ${
+                            active
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : isSun
+                              ? 'bg-rose-50/70 text-rose-600 border-rose-200 hover:bg-rose-100'
+                              : isSat
+                              ? 'bg-blue-50/70 text-blue-600 border-blue-200 hover:bg-blue-100'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-rose-50/75 border border-rose-200 space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={excludeHolidaysOnWeekday}
+                      onChange={(e) => setExcludeHolidaysOnWeekday(e.target.checked)}
+                      className="w-4 h-4 rounded accent-rose-600 cursor-pointer"
+                    />
+                    <span className="text-xs font-extrabold text-rose-900">🇰🇷 공휴일·휴무일 자동 제외</span>
+                  </label>
+                  <p className="text-[11px] text-rose-700 leading-snug pl-6">
+                    {excludeHolidaysOnWeekday ? (
+                      weekdayPreviewResult.excludedHolidays.length > 0 ? (
+                        <>
+                          선택 기간 내{' '}
+                          <strong>공휴일·휴무일 {weekdayPreviewResult.excludedHolidays.length}일</strong>(
+                          {weekdayPreviewResult.excludedHolidays
+                            .slice(0, 3)
+                            .map((h) => `${h.date.slice(5)} ${h.name}`)
+                            .join(', ')}
+                          {weekdayPreviewResult.excludedHolidays.length > 3 ? ' 등' : ''})이 자동 제외됩니다.
+                        </>
+                      ) : (
+                        '선택한 요일과 겹치는 공휴일이 없어 모든 해당 요일이 포함됩니다.'
+                      )
+                    ) : (
+                      '공휴일 포함 모드가 켜져 있어 휴일에도 동일하게 등록됩니다.'
+                    )}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleApplyWeekdayDates}
+                    className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs"
+                  >
+                    <Icon name="filter" className="w-3.5 h-3.5" />
+                    <span>요일 날짜 적용하기 ({weekdayPreviewResult.matchedDates.length}일 선택)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMultiSelectMode((prev) => !prev);
+                      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                        setIsRightSidebarOpen(false);
+                      }
+                    }}
+                    className={`w-full py-1.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                      isMultiSelectMode
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                    }`}
+                  >
+                    <Icon name="checkSquare" className="w-3.5 h-3.5" />
+                    <span>
+                      {isMultiSelectMode ? '달력에서 날짜 클릭 중...' : '달력에서 개별 날짜 직접 클릭 선택'}
+                    </span>
+                  </button>
+                </div>
+
+                {selectedDateKeys.length > 0 && (
+                  <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+                      <span>적용 대상 날짜 ({selectedDateKeys.length}일)</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDateKeys([])}
+                        className="text-rose-600 hover:underline"
+                      >
+                        전체 비우기
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                      {selectedDateKeys.map((dKey) => (
+                        <span
+                          key={dKey}
+                          onClick={() => toggleDateSelection(dKey)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-amber-300 text-[11px] font-bold text-amber-900 cursor-pointer hover:bg-rose-50"
+                        >
+                          {dKey.slice(5)} ×
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={handleBatchInsertRecurringTasks}
+                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-sm transition-all flex items-center justify-center gap-1.5"
+              >
+                <Icon name="plus" className="w-4 h-4" />
+                <span>
+                  선택한 {selectedDateKeys.length}개 날짜에 일괄 등록 (
+                  {selectedDateKeys.length * selectedTemplateIds.length}건)
+                </span>
+              </button>
+            </aside>
+          </>
+        )}
+      </div>
+
+      {/* ==================== 모달 1: 날짜별 업무 및 연차/공휴일 관리 ==================== */}
+      {modalDate && (
+        <div
+          onClick={() => {
+            setModalDate(null);
+            setEditingTaskId(null);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]"
+          >
+            <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+                    {modalDate} 업무 및 휴가 관리
+                  </h2>
+                  {effectiveHolidays[modalDate] && (
+                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 border border-rose-200 text-xs font-extrabold">
+                      🇰🇷 {effectiveHolidays[modalDate].name}
+                    </span>
+                  )}
+                  {leaves[modalDate] && LEAVE_TYPES[leaves[modalDate].type] && (
+                    <span
+                      className={`px-2 py-0.5 rounded-md border text-xs font-extrabold ${
+                        LEAVE_TYPES[leaves[modalDate].type].badgeClass
+                      }`}
+                    >
+                      {LEAVE_TYPES[leaves[modalDate].type].emoji}{' '}
+                      {LEAVE_TYPES[leaves[modalDate].type].shortLabel}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-500">
+                  현재 {(tasksByDate[modalDate] || []).length}건 등록됨 · {activeYear}년 누적 연차 사용{' '}
+                  {leaveStats.usedDays}일 / 잔여 {leaveStats.remainingDays}일
+                </p>
+              </div>
+              <button
+                onClick={() => setModalDate(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200"
+              >
+                <Icon name="x" className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-4 py-3 bg-teal-50/75 border-b border-teal-200/80 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-teal-950">
+                  🌴 연차 · 반차 지정 (사용 개수 자동 카운트)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsLeaveSummaryModalOpen(true)}
+                  className="text-[11px] font-bold text-teal-700 hover:underline"
+                >
+                  {activeYear}년 사용현황 ({leaveStats.usedDays}일) ▸
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleSetLeaveOnDate(modalDate, null)}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-extrabold border transition-all ${
+                    !leaves[modalDate]
+                      ? 'bg-slate-800 text-white border-slate-800 shadow-2xs'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  근무일(없음)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetLeaveOnDate(modalDate, 'full')}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-extrabold border transition-all ${
+                    leaves[modalDate]?.type === 'full'
+                      ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                      : 'bg-white text-teal-800 border-teal-200 hover:bg-teal-100'
+                  }`}
+                >
+                  🌴 연차 (1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetLeaveOnDate(modalDate, 'am')}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-extrabold border transition-all ${
+                    leaves[modalDate]?.type === 'am'
+                      ? 'bg-sky-600 text-white border-sky-600 shadow-2xs'
+                      : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-100'
+                  }`}
+                >
+                  🌤️ 오전 (0.5)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetLeaveOnDate(modalDate, 'pm')}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-extrabold border transition-all ${
+                    leaves[modalDate]?.type === 'pm'
+                      ? 'bg-orange-600 text-white border-orange-600 shadow-2xs'
+                      : 'bg-white text-orange-800 border-orange-200 hover:bg-orange-100'
+                  }`}
+                >
+                  🌇 오후 (0.5)
+                </button>
+              </div>
+
+              {leaves[modalDate] && (
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <input
+                    type="text"
+                    value={modalLeaveMemo}
+                    onChange={(e) => setModalLeaveMemo(e.target.value)}
+                    placeholder="휴가 사유 메모 (예: 개인사유, 병원, 가족행사...)"
+                    className="flex-1 min-w-0 px-2.5 py-1 text-xs bg-white border border-teal-200 rounded-lg focus:outline-none focus:border-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSetLeaveOnDate(modalDate, leaves[modalDate].type, modalLeaveMemo)}
+                    className="px-2.5 py-1 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shrink-0"
+                  >
+                    메모 저장
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-200/80 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                <span className="text-xs font-extrabold text-rose-700 shrink-0">🇰🇷 공휴일/휴무:</span>
+                <input
+                  type="text"
+                  value={customHolidayInputName}
+                  onChange={(e) => setCustomHolidayInputName(e.target.value)}
+                  placeholder="예: 임시공휴일, 창립기념일..."
+                  className="flex-1 min-w-0 px-2.5 py-1 text-xs bg-white border border-rose-200 rounded-lg focus:outline-none focus:border-rose-400"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleSaveCustomHoliday(modalDate)}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
+                >
+                  {effectiveHolidays[modalDate] ? '수정' : '휴무일 지정'}
+                </button>
+                {effectiveHolidays[modalDate] && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveHolidayOnDate(modalDate)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold"
+                  >
+                    해제
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <form onSubmit={handleModalBatchAdd} className="p-4 border-b border-slate-200 space-y-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {categories.map((cat) => {
+                  const style = getCategoryInfo(cat.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setModalCategory(cat.id)}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                        modalCategory === cat.id
+                          ? `${style.bg} ${style.text} ${style.border} ring-2 ring-indigo-500/30`
+                          : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${style.dot}`} />
+                      {cat.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <textarea
+                rows={3}
+                value={modalBatchInput}
+                onChange={(e) => setModalBatchInput(e.target.value)}
+                placeholder={'업무 내용을 입력하세요.\n엔터(줄바꿈)로 구분하면 5개~10개 업무도 한 번에 등록됩니다!'}
+                className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+              />
+
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  {(tasksByDate[modalDate] || []).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => copyAllDayTasksToClipboard(modalDate, tasksByDate[modalDate], e)}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                    >
+                      📑 이 날짜 일정 전체 복사
+                    </button>
+                  )}
+                  {clipboardTasks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => pasteClipboardToDate(modalDate, e)}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold hover:bg-emerald-100"
+                    >
+                      📋 붙여넣기 ({clipboardTasks.length}건)
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-xs shrink-0 ml-auto"
+                >
+                  업무 등록하기
+                </button>
+              </div>
+            </form>
+
+            <div className="p-4 overflow-y-auto space-y-2 flex-1 bg-slate-50/50">
+              {(tasksByDate[modalDate] || []).length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">등록된 업무가 없습니다.</div>
+              ) : (
+                (tasksByDate[modalDate] || []).map((task) => {
+                  const cat = getCategoryInfo(task.category);
+                  const isEditing = editingTaskId === task.id;
+
+                  return (
+                    <div
+                      key={task.id}
+                      className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white border border-slate-200 shadow-2xs"
+                    >
+                      {isEditing ? (
+                        <div className="flex-1 flex flex-wrap items-center gap-1.5">
+                          <select
+                            value={editingTaskCategory}
+                            onChange={(e) => setEditingTaskCategory(e.target.value)}
+                            className="px-2 py-1 text-xs border border-slate-300 rounded-lg bg-slate-50 font-bold text-slate-700"
+                          >
+                            {categories.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={editingTaskTitle}
+                            onChange={(e) => setEditingTaskTitle(e.target.value)}
+                            className="flex-1 min-w-[140px] px-2 py-1 text-xs border border-indigo-400 rounded-lg focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => saveEditedTask(task.id)}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-bold"
+                          >
+                            저장
+                          </button>
+                          <button
+                            onClick={() => setEditingTaskId(null)}
+                            className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs"
+                          >
+                            취소
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            onClick={() => toggleTaskComplete(task.id)}
+                            className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                          >
+                            <span
+                              className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                                task.completed
+                                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                                  : 'border-slate-300 bg-white'
+                              }`}
+                            >
+                              {task.completed && <Icon name="check" className="w-3 h-3" />}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0 ${cat.bg} ${cat.text}`}>
+                              {cat.label}
+                            </span>
+                            <span
+                              className={`text-xs sm:text-sm font-medium break-words ${
+                                task.completed ? 'line-through text-slate-400' : 'text-slate-800'
+                              }`}
+                            >
+                              {task.title}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={(e) => copySingleTaskToClipboard(task, e)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                              title="복사"
+                            >
+                              <Icon name="copy" className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingTaskId(task.id);
+                                setEditingTaskTitle(task.title);
+                                setEditingTaskCategory(task.category);
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                              title="수정"
+                            >
+                              <Icon name="edit" className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => deleteTask(task.id, e)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                              title="삭제"
+                            >
+                              <Icon name="trash" className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 모달 2: 검색된 업무를 원하는 일정에 복사 ==================== */}
+      {copyTargetTask && (
+        <div
+          onClick={() => setCopyTargetTask(null)}
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-5 space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <h3 className="text-sm font-extrabold text-slate-900">검색한 업무를 원하는 일정에 복사</h3>
+              <button
+                onClick={() => setCopyTargetTask(null)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                <Icon name="x" className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs space-y-1">
+              <div className="text-indigo-600 font-bold">복사할 업무</div>
+              <div className="text-sm font-extrabold text-slate-900">{copyTargetTask.title}</div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">복사해 넣을 날짜 선택</label>
+              <input
+                type="date"
+                value={copyTargetDateInput}
+                onChange={(e) => setCopyTargetDateInput(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                onClick={() => handleDirectCopyToDates(copyTargetTask, [copyTargetDateInput])}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold"
+              >
+                {copyTargetDateInput} 일정에 복사 등록하기
+              </button>
+              {selectedDateKeys.length > 0 && (
+                <button
+                  onClick={() => handleDirectCopyToDates(copyTargetTask, selectedDateKeys)}
+                  className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold"
+                >
+                  현재 다중 선택된 {selectedDateKeys.length}개 날짜에 모두 복사 등록하기
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 모달 3: 데이터 백업 완료 안내 ==================== */}
+      {backupModalData && (
+        <div
+          onClick={() => setBackupModalData(null)}
+          className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden max-h-[92vh] flex flex-col"
+          >
+            <div className="px-5 py-4 border-b bg-emerald-600 text-white border-emerald-700 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                  <Icon name="download" className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold">데이터 백업 완료</h3>
+                  <p className="text-[11px] text-white/85">백업 시각: {backupModalData.timestamp}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBackupModalData(null)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white"
+              >
+                <Icon name="x" className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-3.5 text-xs overflow-y-auto">
+              <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+                <div className="flex items-center gap-1.5 font-extrabold text-slate-900">
+                  <Icon name="folder" className="w-4 h-4 shrink-0 text-emerald-600" />
+                  <span>파일 저장 위치: {backupModalData.locationTitle}</span>
+                </div>
+                <div className="text-[11px] font-bold text-slate-800 break-all">📄 {backupModalData.fileName}</div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">{backupModalData.locationDetail}</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2">
+                <div className="text-xs font-extrabold text-amber-950">
+                  📋 파일 다운로드가 안 될 때: 텍스트로 복사해 보관
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOneTouchCopyBackup}
+                  className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold shadow-xs flex items-center justify-center gap-2 transition-all ${
+                    backupCopiedFlag ? 'bg-emerald-600 text-white' : 'bg-amber-500 hover:bg-amber-600 text-white'
+                  }`}
+                >
+                  <Icon name={backupCopiedFlag ? 'checkCircle' : 'copy'} className="w-4 h-4" />
+                  <span>
+                    {backupCopiedFlag
+                      ? '복사 완료! 메모장이나 메신저에 붙여넣으세요'
+                      : '백업 텍스트 전체 복사'}
+                  </span>
+                </button>
+                <textarea
+                  ref={backupTextareaRef}
+                  readOnly
+                  rows={3}
+                  value={backupModalData.rawJson}
+                  onClick={(e) => e.target.select()}
+                  className="w-full p-2 text-[11px] font-mono bg-white border border-amber-200 rounded-lg text-slate-700 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">전체 등록 업무</span>
+                  <span className="font-extrabold text-slate-900">{backupModalData.stats.tasksCount}건</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">연차·반차 기록</span>
+                  <span className="font-extrabold text-teal-700">{backupModalData.stats.leavesCount || 0}건</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">업무 분류</span>
+                  <span className="font-extrabold text-slate-900">{backupModalData.stats.categoriesCount}개</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">반복 템플릿</span>
+                  <span className="font-extrabold text-slate-900">{backupModalData.stats.templatesCount}개</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setBackupModalData(null)}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-xs"
+              >
+                확인했습니다
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 모달 4: 백업 복구 (텍스트 붙여넣기 / 파일 선택) ==================== */}
+      {isRestoreModalOpen && (
+        <div
+          onClick={() => setIsRestoreModalOpen(false)}
+          className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden max-h-[92vh] flex flex-col"
+          >
+            <div className="px-5 py-4 border-b bg-indigo-600 text-white border-indigo-700 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                  <Icon name="upload" className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold">백업 데이터 복구하기</h3>
+                  <p className="text-[11px] text-white/85">텍스트 붙여넣기 · 파일 업로드</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsRestoreModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white"
+              >
+                <Icon name="x" className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-1.5 gap-1">
+              <button
+                type="button"
+                onClick={() => setRestoreTab('paste')}
+                className={`py-2 px-2 rounded-xl text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 transition-all ${
+                  restoreTab === 'paste'
+                    ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-slate-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Icon name="fileText" className="w-3.5 h-3.5" />
+                <span>텍스트 붙여넣기</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRestoreTab('file')}
+                className={`py-2 px-2 rounded-xl text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 transition-all ${
+                  restoreTab === 'file'
+                    ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-slate-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Icon name="folder" className="w-3.5 h-3.5" />
+                <span>파일 선택</span>
+              </button>
+            </div>
+
+            <div className="p-5 text-xs space-y-4 overflow-y-auto">
+              {restoreTab === 'paste' ? (
+                <div className="space-y-3">
+                  <div className="text-xs font-extrabold text-slate-800">
+                    메모장이나 메신저에 복사해 둔 백업 텍스트(JSON) 전체를 붙여넣으세요:
+                  </div>
+                  <textarea
+                    rows={6}
+                    value={pasteRestoreText}
+                    onChange={(e) => setPasteRestoreText(e.target.value)}
+                    placeholder={'{\n  "appName": "All_Years_Work_Schedule_Calendar",\n  ...\n}'}
+                    className="w-full p-3 text-xs font-mono border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => applyRestoredJsonString(pasteRestoreText, '직접 붙여넣은 백업 텍스트(JSON)')}
+                    className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-extrabold shadow-xs"
+                  >
+                    붙여넣은 백업 텍스트로 복원 실행
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-4 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 text-center space-y-2.5">
+                    <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto">
+                      <Icon name="upload" className="w-6 h-6" />
+                    </div>
+                    <div className="text-sm font-extrabold text-slate-900">
+                      저장해 둔 백업 파일(.json)을 선택하세요
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      다운로드 폴더나 클라우드 드라이브에 보관한 백업 파일을 불러오면 전체 연도 일정과 업무 분류 설정이 즉시 복원됩니다.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-extrabold shadow-xs"
+                    >
+                      백업 파일 찾아서 열기
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 모달 5: 백업 복구 완료 안내 ==================== */}
+      {restoreCompleteModal && (
+        <div
+          onClick={() => setRestoreCompleteModal(null)}
+          className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b bg-indigo-600 text-white border-indigo-700 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                  <Icon name="checkCircle" className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold">백업 데이터 복원 완료</h3>
+                  <p className="text-[11px] text-white/85">복원 시각: {restoreCompleteModal.timestamp}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRestoreCompleteModal(null)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white"
+              >
+                <Icon name="x" className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <div className="text-[11px] font-bold text-slate-500">불러온 원본 출처</div>
+                <div className="text-xs sm:text-sm font-extrabold text-slate-900 break-all">
+                  📥 {restoreCompleteModal.sourceLabel}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-1">
+                <div className="flex items-center gap-1.5 font-extrabold text-slate-900">
+                  <Icon name="folder" className="w-4 h-4 shrink-0 text-indigo-600" />
+                  <span>데이터 복원·저장 위치</span>
+                </div>
+                <div className="text-xs sm:text-sm font-extrabold text-indigo-800">
+                  {restoreCompleteModal.locationTitle}
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">{restoreCompleteModal.locationDetail}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">복원된 일정</span>
+                  <span className="font-extrabold text-slate-900">{restoreCompleteModal.stats.tasksCount}건</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">연차·반차 기록</span>
+                  <span className="font-extrabold text-teal-700">{restoreCompleteModal.stats.leavesCount || 0}건</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">복원된 분류</span>
+                  <span className="font-extrabold text-slate-900">{restoreCompleteModal.stats.categoriesCount}개</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-600 font-semibold">복원된 템플릿</span>
+                  <span className="font-extrabold text-slate-900">{restoreCompleteModal.stats.templatesCount}개</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setRestoreCompleteModal(null)}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs"
+              >
+                확인했습니다
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 모달 6: 연차 · 반차 사용 현황 ==================== */}
+      {isLeaveSummaryModalOpen && (
+        <div
+          onClick={() => setIsLeaveSummaryModalOpen(false)}
+          className="fixed inset-0 z-50 bg-slate-900/55 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]"
+          >
+            <div className="px-5 py-4 border-b bg-teal-600 text-white border-teal-700 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center text-lg shrink-0">
+                  🌴
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold">
+                    {leaveStats.year}년 연차 · 반차 자동 집계 현황
+                  </h3>
+                  <p className="text-[11px] text-white/85">
+                    연차(1일) · 오전반차(0.5일) · 오후반차(0.5일) 자동 합산
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsLeaveSummaryModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white"
+              >
+                <Icon name="x" className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="text-[11px] font-bold text-slate-500">{activeYear}년 총 연차</div>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="60"
+                      value={totalAnnualLeave}
+                      onChange={(e) => {
+                        const val = Math.max(0, Number(e.target.value));
+                        commitCalendarChange((prev) => ({
+                          ...prev,
+                          annualLeaveByYear: {
+                            ...(prev.annualLeaveByYear || {}),
+                            [activeYear]: val
+                          }
+                        }));
+                      }}
+                      className="w-14 px-1.5 py-0.5 text-sm font-extrabold text-slate-900 border border-slate-300 rounded-md bg-white focus:outline-none focus:border-teal-500"
+                    />
+                    <span className="font-bold text-slate-700">일</span>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 space-y-1">
+                  <div className="text-[11px] font-bold text-teal-700">총 사용 일수</div>
+                  <div className="text-lg font-extrabold text-teal-900">{leaveStats.usedDays}일</div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 space-y-1">
+                  <div className="text-[11px] font-bold text-indigo-700">잔여 연차</div>
+                  <div
+                    className={`text-lg font-extrabold ${
+                      leaveStats.remainingDays < 0 ? 'text-rose-600' : 'text-indigo-900'
+                    }`}
+                  >
+                    {leaveStats.remainingDays}일
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-xl bg-teal-50/60 border border-teal-200 text-center">
+                  <div className="text-[11px] font-bold text-teal-800">🌴 연차 (1일)</div>
+                  <div className="text-sm font-extrabold text-teal-950 mt-0.5">
+                    {leaveStats.fullCount}회 ({leaveStats.fullCount * 1}일)
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-sky-50/60 border border-sky-200 text-center">
+                  <div className="text-[11px] font-bold text-sky-800">🌤️ 오전반차 (0.5일)</div>
+                  <div className="text-sm font-extrabold text-sky-950 mt-0.5">
+                    {leaveStats.amCount}회 ({leaveStats.amCount * 0.5}일)
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-orange-50/60 border border-orange-200 text-center">
+                  <div className="text-[11px] font-bold text-orange-800">🌇 오후반차 (0.5일)</div>
+                  <div className="text-sm font-extrabold text-orange-950 mt-0.5">
+                    {leaveStats.pmCount}회 ({leaveStats.pmCount * 0.5}일)
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-800">
+                    {activeYear}년 등록된 연차·반차 목록 ({leaveStats.list.length}건)
+                  </span>
+                  <span className="text-[11px] text-slate-500">달력에서 원하는 날짜를 클릭해 바로 지정 가능</span>
+                </div>
+
+                {leaveStats.list.length === 0 ? (
+                  <div className="py-8 text-center rounded-xl bg-slate-50 border border-slate-200 text-slate-400">
+                    {activeYear}년에 등록된 연차·반차 일정이 없습니다.
+                    <br />
+                    달력에서 날짜를 클릭해 연차·오전반차·오후반차를 지정해보세요!
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {leaveStats.list.map((item) => {
+                      const dObj = parseDateKey(item.dateKey);
+                      const dow = DAYS_OF_WEEK[dObj.getDay()];
+                      return (
+                        <div
+                          key={item.dateKey}
+                          className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white border border-slate-200 hover:border-teal-300"
+                        >
+                          <div
+                            onClick={() => {
+                              setAnchorDate(dObj);
+                              setIsLeaveSummaryModalOpen(false);
+                              setModalDate(item.dateKey);
+                            }}
+                            className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                          >
+                            <span className="font-extrabold text-slate-800 shrink-0">
+                              {item.dateKey} ({dow})
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded border text-[11px] font-extrabold shrink-0 ${item.meta.badgeClass}`}
+                            >
+                              {item.meta.emoji} {item.meta.shortLabel}
+                            </span>
+                            {item.memo && (
+                              <span className="text-[11px] text-slate-500 break-words">{item.memo}</span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSetLeaveOnDate(item.dateKey, null)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                            title="연차·반차 해제"
+                          >
+                            <Icon name="trash" className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsLeaveSummaryModalOpen(false)}
+                className="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-extrabold shadow-xs"
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 토스트 알림 */}
+      {toastMessage && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[92vw] max-w-md bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-lg text-xs font-bold flex items-center gap-2 border border-slate-700">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+          <span className="leading-snug">{toastMessage}</span>
+        </div>
+      )}
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(148, 163, 184, 0.5); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, 0.8); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
