@@ -81,7 +81,8 @@ const ICON_DEFS = {
   checkCircle: [2.2, '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'],
   fileText: [2, '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>'],
   filter: [2, '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
-  copyPlus: [2, '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/><line x1="15.5" y1="12.5" x2="15.5" y2="18.5"/><line x1="12.5" y1="15.5" x2="18.5" y2="15.5"/>']
+  copyPlus: [2, '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/><line x1="15.5" y1="12.5" x2="15.5" y2="18.5"/><line x1="12.5" y1="15.5" x2="18.5" y2="15.5"/>'],
+  move: [2, '<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>']
 };
 
 const Icon = ({ name, className = 'w-4 h-4' }) => {
@@ -318,21 +319,7 @@ const LEAVE_TYPES = {
   pm: { key: 'pm', label: '오후반차', shortLabel: '오후반차 (-0.5)', emoji: '🌇', deduction: 0.5, badgeClass: 'bg-orange-100 text-orange-800 border-orange-300', cellTint: 'bg-orange-50/45 hover:bg-orange-50/75' }
 };
 
-// 개별 할일 및 반복 템플릿 하위 호환 정규화 (기존 데이터에 content 필드가 없어도 자동 보완)
-const normalizeTaskItem = (item) => ({
-  ...item,
-  title: typeof item?.title === 'string' ? item.title : String(item?.title || ''),
-  content: typeof item?.content === 'string' ? item.content : '',
-  completed: Boolean(item?.completed)
-});
-
-const normalizeTemplateItem = (tpl) => ({
-  ...tpl,
-  title: typeof tpl?.title === 'string' ? tpl.title : String(tpl?.title || ''),
-  content: typeof tpl?.content === 'string' ? tpl.content : ''
-});
-
-// 저장 데이터 정규화 (로컬 저장소 / 클라우드 공통)
+// 저장 데이터 정규화 (로컬 저장소 / 클라우드 공통, content 필드 하위 호환 포함)
 const normalizeCalState = (parsed) => {
   if (!parsed || typeof parsed !== 'object') return null;
   const allowanceByYear =
@@ -346,13 +333,25 @@ const normalizeCalState = (parsed) => {
   ) {
     allowanceByYear[2027] = Number(parsed.totalAnnualLeave);
   }
-  const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeTaskItem) : INITIAL_TASKS;
-  const rawTemplates = Array.isArray(parsed.recurringTemplates)
-    ? parsed.recurringTemplates.map(normalizeTemplateItem)
+  const normalizedTasks = Array.isArray(parsed.tasks)
+    ? parsed.tasks.map((t) => ({
+        ...t,
+        title: t.title || '',
+        content: typeof t.content === 'string' ? t.content : ''
+      }))
+    : INITIAL_TASKS;
+
+  const normalizedTemplates = Array.isArray(parsed.recurringTemplates)
+    ? parsed.recurringTemplates.map((tpl) => ({
+        ...tpl,
+        title: tpl.title || '',
+        content: typeof tpl.content === 'string' ? tpl.content : ''
+      }))
     : INITIAL_TEMPLATES;
+
   return {
-    tasks: rawTasks,
-    recurringTemplates: rawTemplates,
+    tasks: normalizedTasks,
+    recurringTemplates: normalizedTemplates,
     categories: Array.isArray(parsed.categories) && parsed.categories.length > 0 ? parsed.categories : INITIAL_CATEGORIES,
     customHolidays: parsed.customHolidays && typeof parsed.customHolidays === 'object' ? parsed.customHolidays : {},
     leaves: parsed.leaves && typeof parsed.leaves === 'object' ? parsed.leaves : {},
@@ -782,7 +781,6 @@ function App() {
     return true;
   });
 
-  // 반복 업무 템플릿 상태 (제목 + 내용 분리)
   const [selectedTemplateIds, setSelectedTemplateIds] = useState(['tpl-1']);
   const [newTplTitle, setNewTplTitle] = useState('');
   const [newTplContent, setNewTplContent] = useState('');
@@ -811,15 +809,89 @@ function App() {
   const [copyTargetTask, setCopyTargetTask] = useState(null);
   const [copyTargetDateInput, setCopyTargetDateInput] = useState(() => formatDateKey(getSystemToday()));
 
-  // 날짜 상세 모달 & 할일 제목/내용 분리 입력 및 수정 상태
+  // 날짜 모달 입력 (제목 & 세부 내용 분리)
   const [modalDate, setModalDate] = useState(null);
-  const [modalTaskTitle, setModalTaskTitle] = useState('');
-  const [modalTaskContent, setModalTaskContent] = useState('');
+  const [modalTitleInput, setModalTitleInput] = useState('');
+  const [modalContentInput, setModalContentInput] = useState('');
   const [modalCategory, setModalCategory] = useState('accounting');
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskTitle, setEditingTaskTitle] = useState('');
   const [editingTaskContent, setEditingTaskContent] = useState('');
   const [editingTaskCategory, setEditingTaskCategory] = useState('accounting');
+
+  // ============================================================================
+  // 할일 카드 드래그 & 롱프레스(길게 누르기) 날짜 이동 상태
+  // ============================================================================
+  const [movingTask, setMovingTask] = useState(null); // { id, title, date, category }
+  const [dragOverDateKey, setDragOverDateKey] = useState(null);
+  const longPressTimerRef = useRef(null);
+  const touchStartPosRef = useRef({ x: 0, y: 0 });
+  const suppressNextClickRef = useRef(false);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const moveTaskToDate = useCallback(
+    (taskId, targetDateKey) => {
+      if (!taskId || !targetDateKey) return;
+      const targetTask = tasks.find((t) => t.id === taskId);
+      if (!targetTask) return;
+      if (targetTask.date === targetDateKey) {
+        setMovingTask(null);
+        setDragOverDateKey(null);
+        return;
+      }
+      commitCalendarChange((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((t) => (t.id === taskId ? { ...t, date: targetDateKey } : t))
+      }));
+      setMovingTask(null);
+      setDragOverDateKey(null);
+      showToast(`"${targetTask.title}" 일정이 ${targetDateKey}로 이동되었습니다.`);
+    },
+    [tasks, commitCalendarChange, showToast]
+  );
+
+  // 전역 터치 드래그 이동 & 드롭 감지 (모바일에서 길게 누른 뒤 손가락을 끌어서 놓을 때)
+  useEffect(() => {
+    if (!movingTask) return;
+
+    const handleGlobalTouchMove = (e) => {
+      const touch = e.touches?.[0];
+      if (!touch) return;
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const cellEl = el?.closest('[data-date-key]');
+      if (cellEl) {
+        const dKey = cellEl.getAttribute('data-date-key');
+        if (dKey) setDragOverDateKey(dKey);
+      }
+    };
+
+    const handleGlobalTouchEnd = (e) => {
+      const touch = e.changedTouches?.[0];
+      if (touch) {
+        const el = document.elementFromPoint(touch.clientX, touch.clientY);
+        const cellEl = el?.closest('[data-date-key]');
+        const dKey = cellEl?.getAttribute('data-date-key');
+        if (dKey && dKey !== movingTask.date) {
+          moveTaskToDate(movingTask.id, dKey);
+          return;
+        }
+      }
+      setDragOverDateKey(null);
+    };
+
+    window.addEventListener('touchmove', handleGlobalTouchMove, { passive: true });
+    window.addEventListener('touchend', handleGlobalTouchEnd);
+    return () => {
+      window.removeEventListener('touchmove', handleGlobalTouchMove);
+      window.removeEventListener('touchend', handleGlobalTouchEnd);
+    };
+  }, [movingTask, moveTaskToDate]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -1021,16 +1093,16 @@ function App() {
   };
 
   // ============================================================================
-  // 4. 백업(파일·텍스트) / 복구 — title + content 모두 포함
+  // 4. 백업(파일·텍스트) / 복구
   // ============================================================================
   const buildBackupPayloadObject = () => {
     return {
       appName: 'All_Years_Work_Schedule_Calendar',
-      version: '9.1',
+      version: '10.0',
       exportedAt: new Date().toISOString(),
       data: {
-        tasks: tasks.map(normalizeTaskItem),
-        recurringTemplates: templates.map(normalizeTemplateItem),
+        tasks,
+        recurringTemplates: templates,
         categories,
         customHolidays,
         leaves,
@@ -1150,12 +1222,22 @@ function App() {
         return false;
       }
 
-      const nextTasks = restoredData.tasks.map(normalizeTaskItem);
-      const rawTemplates = Array.isArray(restoredData.recurringTemplates)
-        ? restoredData.recurringTemplates.map(normalizeTemplateItem)
-        : Array.isArray(restoredData.templates)
-        ? restoredData.templates.map(normalizeTemplateItem)
-        : templates;
+      const nextTasks = restoredData.tasks.map((t) => ({
+        ...t,
+        title: t.title || '',
+        content: typeof t.content === 'string' ? t.content : ''
+      }));
+      const rawTemplates = (
+        Array.isArray(restoredData.recurringTemplates)
+          ? restoredData.recurringTemplates
+          : Array.isArray(restoredData.templates)
+          ? restoredData.templates
+          : templates
+      ).map((tpl) => ({
+        ...tpl,
+        title: tpl.title || '',
+        content: typeof tpl.content === 'string' ? tpl.content : ''
+      }));
       const nextCategories =
         Array.isArray(restoredData.categories) && restoredData.categories.length > 0
           ? restoredData.categories
@@ -1337,15 +1419,15 @@ function App() {
     return map;
   }, [tasks, selectedCategory]);
 
-  // 전체 업무 검색: 제목(title) + 내용(content) + 날짜(date) 동시 검색
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return tasks
       .filter((t) => {
-        const titleMatch = (t.title || '').toLowerCase().includes(q);
-        const contentMatch = (t.content || '').toLowerCase().includes(q);
-        const dateMatch = (t.date || '').includes(q);
-        const matchesQuery = !q || titleMatch || contentMatch || dateMatch;
+        const matchesQuery =
+          !q ||
+          (t.title || '').toLowerCase().includes(q) ||
+          (t.content || '').toLowerCase().includes(q) ||
+          t.date.includes(q);
         const matchesCat = selectedCategory === 'all' || t.category === selectedCategory;
         return matchesQuery && matchesCat;
       })
@@ -1599,7 +1681,7 @@ function App() {
   };
 
   // ============================================================================
-  // 6. 네비게이션 및 업무 CRUD (제목 + 내용 분리 지원)
+  // 6. 네비게이션 및 업무 CRUD (제목 + 내용 분리)
   // ============================================================================
   const handleNavigate = (direction) => {
     const next = new Date(anchorDate);
@@ -1639,7 +1721,7 @@ function App() {
 
   const saveEditedTask = (taskId) => {
     if (!editingTaskTitle.trim()) {
-      showToast('할일 제목을 입력해주세요.');
+      showToast('업무 제목을 입력해주세요.');
       return;
     }
     commitCalendarChange((prev) => ({
@@ -1658,7 +1740,7 @@ function App() {
     setEditingTaskId(null);
     setEditingTaskTitle('');
     setEditingTaskContent('');
-    showToast('업무 제목·내용과 분류가 수정되었습니다.');
+    showToast('업무 제목과 내용, 분류가 수정되었습니다.');
   };
 
   // ============================================================================
@@ -1728,30 +1810,17 @@ function App() {
     showToast('기본 업무 분류(회계, 인사, 총무, 사무, 긴급, 자금)로 초기화되었습니다.');
   };
 
-  // 복사·붙여넣기 (title + content 함께 복사)
   const copySingleTaskToClipboard = (task, e) => {
     if (e) e.stopPropagation();
-    setClipboardTasks([
-      {
-        title: task.title,
-        content: task.content || '',
-        category: task.category
-      }
-    ]);
-    showToast(`"${task.title}" 업무(제목·내용 포함)가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
+    setClipboardTasks([{ title: task.title, content: task.content || '', category: task.category }]);
+    showToast(`"${task.title}" 업무가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
   };
 
   const copyAllDayTasksToClipboard = (dateKey, dayTasksList, e) => {
     if (e) e.stopPropagation();
     if (!dayTasksList || dayTasksList.length === 0) return;
-    setClipboardTasks(
-      dayTasksList.map((t) => ({
-        title: t.title,
-        content: t.content || '',
-        category: t.category
-      }))
-    );
-    showToast(`${dateKey}의 일정 전체(${dayTasksList.length}건, 제목·내용 포함)가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
+    setClipboardTasks(dayTasksList.map((t) => ({ title: t.title, content: t.content || '', category: t.category })));
+    showToast(`${dateKey}의 일정 전체(${dayTasksList.length}건)가 복사되었습니다. 원하는 날짜 칸의 [붙여넣기]를 눌러주세요.`);
   };
 
   const pasteClipboardToDate = (dateKey, e) => {
@@ -1787,41 +1856,58 @@ function App() {
       tasks: [...prev.tasks, ...newItems]
     }));
     setCopyTargetTask(null);
-    showToast(`"${task.title}" 업무(제목·내용 포함)를 ${targetDates.length}개 날짜에 복사 등록했습니다.`);
+    showToast(`"${task.title}" 업무를 ${targetDates.length}개 날짜에 복사 등록했습니다.`);
   };
 
-  // 날짜 상세 모달에서 제목 + 내용 분리 등록
+  // 날짜별 업무 등록 (제목 + 세부 내용 분리)
   const handleModalTaskAdd = (e) => {
     e.preventDefault();
     if (!modalDate) return;
-    const trimmedTitle = modalTaskTitle.trim();
-    const trimmedContent = modalTaskContent.trim();
+    const rawTitle = modalTitleInput.trim();
+    const rawContent = modalContentInput.trim();
 
-    if (!trimmedTitle) {
+    if (!rawTitle) {
       showToast('할일 제목을 입력해주세요.');
       return;
     }
 
-    const newItem = {
-      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      date: modalDate,
-      title: trimmedTitle,
-      content: trimmedContent,
-      category: modalCategory,
-      completed: false
-    };
+    const lines = rawTitle
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return;
+
+    const newItems = lines.map((line, idx) => {
+      // 여러 줄 일괄 입력 시 "제목 | 내용" 구분 지원, 1줄 입력 시 아래 내용칸 텍스트 연결
+      let parsedTitle = line;
+      let parsedContent = lines.length === 1 ? rawContent : '';
+      if (line.includes('|')) {
+        const [tPart, ...cParts] = line.split('|');
+        parsedTitle = tPart.trim();
+        const inlineContent = cParts.join('|').trim();
+        parsedContent = inlineContent || (lines.length === 1 ? rawContent : '');
+      }
+      return {
+        id: `task-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        date: modalDate,
+        title: parsedTitle,
+        content: parsedContent,
+        category: modalCategory,
+        completed: false
+      };
+    });
 
     commitCalendarChange((prev) => ({
       ...prev,
-      tasks: [...prev.tasks, newItem]
+      tasks: [...prev.tasks, ...newItems]
     }));
-    setModalTaskTitle('');
-    setModalTaskContent('');
-    showToast(`${modalDate}에 "${trimmedTitle}" 업무가 등록되었습니다.`);
+    setModalTitleInput('');
+    setModalContentInput('');
+    showToast(`${modalDate}에 ${newItems.length}건의 업무가 등록되었습니다.`);
   };
 
   // ============================================================================
-  // 8. 반복 업무 템플릿 (제목 + 내용 분리) & 다중 날짜 일괄 등록
+  // 8. 반복 업무 템플릿 & 다중 날짜 일괄 등록
   // ============================================================================
   const toggleTemplateSelection = (tplId) => {
     setSelectedTemplateIds((prev) =>
@@ -1831,10 +1917,7 @@ function App() {
 
   const handleAddTemplate = (e) => {
     e.preventDefault();
-    if (!newTplTitle.trim()) {
-      showToast('반복 업무 제목을 입력해주세요.');
-      return;
-    }
+    if (!newTplTitle.trim()) return;
     const newTpl = {
       id: `tpl-${Date.now()}`,
       title: newTplTitle.trim(),
@@ -1870,10 +1953,7 @@ function App() {
 
   const saveEditTemplate = (tplId, e) => {
     if (e) e.stopPropagation();
-    if (!editingTplTitle.trim()) {
-      showToast('반복 업무 제목을 입력해주세요.');
-      return;
-    }
+    if (!editingTplTitle.trim()) return;
     commitCalendarChange((prev) => ({
       ...prev,
       recurringTemplates: prev.recurringTemplates.map((t) =>
@@ -1888,8 +1968,6 @@ function App() {
       )
     }));
     setEditingTplId(null);
-    setEditingTplTitle('');
-    setEditingTplContent('');
     showToast('반복 업무 템플릿이 수정되었습니다.');
   };
 
@@ -1933,7 +2011,7 @@ function App() {
       tasks: [...prev.tasks, ...created]
     }));
     showToast(
-      `${selectedDateKeys.length}개 날짜에 ${activeTemplates.length}종 반복 업무(총 ${created.length}건, 제목·내용 포함)를 일괄 등록했습니다!`
+      `${selectedDateKeys.length}개 날짜에 ${activeTemplates.length}종 반복 업무(총 ${created.length}건)를 일괄 등록했습니다!`
     );
     setSelectedDateKeys([]);
     setIsMultiSelectMode(false);
@@ -1956,7 +2034,7 @@ function App() {
   }, [calendarWeeks, viewMode, anchorDate]);
 
   // ============================================================================
-  // 9. 공통 7열 달력 그리드 렌더링 (할일 제목 + 세부 내용 분리 표시)
+  // 9. 공통 7열 달력 그리드 렌더링 (드래그/롱프레스 이동 + 제목/내용 분리 표시)
   // ============================================================================
   const renderCalendarGrid = (weeks, options = {}) => {
     const {
@@ -2047,6 +2125,8 @@ function App() {
                       const isCurrentMonth =
                         targetMonthIndex === null ? true : cellDate.getMonth() === targetMonthIndex;
                       const isCellExpanded = cellHeightMode === 'expand' && !collapsedCells[dateKey];
+                      const isDragTarget =
+                        movingTask && movingTask.date !== dateKey && dragOverDateKey === dateKey;
 
                       const dayOfWeek = cellDate.getDay();
                       const isRedDay = dayOfWeek === 0 || Boolean(holidayInfo);
@@ -2075,7 +2155,32 @@ function App() {
                       return (
                         <div
                           key={dateKey}
+                          data-date-key={dateKey}
+                          onDragOver={(e) => {
+                            if (!movingTask) return;
+                            e.preventDefault();
+                            if (dragOverDateKey !== dateKey) setDragOverDateKey(dateKey);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverDateKey === dateKey) setDragOverDateKey(null);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const droppedId = e.dataTransfer?.getData('text/plain') || movingTask?.id;
+                            if (droppedId) {
+                              moveTaskToDate(droppedId, dateKey);
+                            }
+                          }}
                           onClick={() => {
+                            if (movingTask) {
+                              if (movingTask.date !== dateKey) {
+                                moveTaskToDate(movingTask.id, dateKey);
+                              } else {
+                                setMovingTask(null);
+                                setDragOverDateKey(null);
+                              }
+                              return;
+                            }
                             if (isMultiSelectMode) {
                               toggleDateSelection(dateKey);
                             }
@@ -2083,7 +2188,9 @@ function App() {
                           className={`group relative flex flex-col p-1.5 sm:p-2 transition-all ${
                             isCellExpanded ? minSquareHeightClass : fixedScrollHeightClass
                           } ${isDimmedByLeaveFilter ? 'opacity-30' : ''} ${
-                            isSelectedDate
+                            isDragTarget
+                              ? 'bg-indigo-100/90 ring-2 ring-inset ring-indigo-600'
+                              : isSelectedDate
                               ? 'bg-amber-50/90 ring-2 ring-inset ring-amber-500'
                               : isToday
                               ? 'bg-indigo-50/40'
@@ -2094,7 +2201,7 @@ function App() {
                               : !isCurrentMonth
                               ? 'bg-slate-100/65 opacity-70'
                               : 'hover:bg-slate-50/80'
-                          } ${isMultiSelectMode ? 'cursor-pointer' : ''}`}
+                          } ${isMultiSelectMode || movingTask ? 'cursor-pointer' : ''}`}
                         >
                           <div className="flex items-start justify-between gap-0.5 sm:gap-1 mb-1 sm:mb-1.5 shrink-0">
                             <div className="flex items-center gap-1 flex-wrap min-w-0">
@@ -2149,6 +2256,19 @@ function App() {
                             </div>
 
                             <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                              {movingTask && movingTask.date !== dateKey && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    moveTaskToDate(movingTask.id, dateKey);
+                                  }}
+                                  className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] sm:text-[10px] font-extrabold shadow-2xs"
+                                >
+                                  여기로 이동
+                                </button>
+                              )}
+
                               {dayTasks.length > 0 && (
                                 <>
                                   <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 bg-slate-100 px-1 sm:px-1.5 py-0.5 rounded">
@@ -2196,8 +2316,8 @@ function App() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setModalDate(dateKey);
-                                  setModalTaskTitle('');
-                                  setModalTaskContent('');
+                                  setModalTitleInput('');
+                                  setModalContentInput('');
                                 }}
                                 className="p-1 rounded bg-slate-100 hover:bg-indigo-600 text-slate-600 hover:text-white transition-colors"
                                 title="이 날짜에 업무 추가 및 전체 관리"
@@ -2208,13 +2328,18 @@ function App() {
                           </div>
 
                           <div
-                            className={`flex-1 space-y-1.5 pr-0.5 ${
+                            className={`flex-1 space-y-1 pr-0.5 ${
                               isCellExpanded ? '' : 'overflow-y-auto custom-scrollbar'
                             }`}
                           >
                             {dayTasks.length === 0 ? (
                               <div
                                 onClick={(e) => {
+                                  if (movingTask) {
+                                    e.stopPropagation();
+                                    moveTaskToDate(movingTask.id, dateKey);
+                                    return;
+                                  }
                                   if (!isMultiSelectMode) {
                                     e.stopPropagation();
                                     setModalDate(dateKey);
@@ -2232,14 +2357,77 @@ function App() {
                                   qLower &&
                                   ((task.title || '').toLowerCase().includes(qLower) ||
                                     (task.content || '').toLowerCase().includes(qLower));
-                                const hasContent = Boolean((task.content || '').trim());
+                                const isBeingMoved = movingTask?.id === task.id;
 
                                 return (
                                   <div
                                     key={task.id}
-                                    onClick={(e) => toggleTaskComplete(task.id, e)}
-                                    className={`group/item flex items-start justify-between gap-1 px-1.5 py-1.5 rounded-lg border text-[10.5px] sm:text-[11px] leading-snug cursor-pointer transition-all ${
-                                      isHighlighted
+                                    draggable
+                                    onDragStart={(e) => {
+                                      setMovingTask(task);
+                                      if (e.dataTransfer) {
+                                        e.dataTransfer.effectAllowed = 'move';
+                                        e.dataTransfer.setData('text/plain', task.id);
+                                      }
+                                    }}
+                                    onDragEnd={() => {
+                                      setMovingTask(null);
+                                      setDragOverDateKey(null);
+                                    }}
+                                    onTouchStart={(e) => {
+                                      const touch = e.touches?.[0];
+                                      if (!touch) return;
+                                      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+                                      clearLongPressTimer();
+                                      longPressTimerRef.current = setTimeout(() => {
+                                        suppressNextClickRef.current = true;
+                                        setMovingTask(task);
+                                        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                                          try {
+                                            navigator.vibrate(30);
+                                          } catch (err) {}
+                                        }
+                                        showToast(
+                                          `"${task.title}" 이동 모드: 옮길 날짜 칸을 터치하거나 끌어서 놓으세요.`
+                                        );
+                                      }, 350);
+                                    }}
+                                    onTouchMove={(e) => {
+                                      if (!longPressTimerRef.current) return;
+                                      const touch = e.touches?.[0];
+                                      if (!touch) return;
+                                      const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+                                      const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+                                      if (dx > 10 || dy > 10) {
+                                        clearLongPressTimer();
+                                      }
+                                    }}
+                                    onTouchEnd={() => {
+                                      clearLongPressTimer();
+                                    }}
+                                    onClick={(e) => {
+                                      if (suppressNextClickRef.current) {
+                                        suppressNextClickRef.current = false;
+                                        e.stopPropagation();
+                                        return;
+                                      }
+                                      if (movingTask) {
+                                        e.stopPropagation();
+                                        if (movingTask.id === task.id) {
+                                          setMovingTask(null);
+                                          setDragOverDateKey(null);
+                                        } else if (movingTask.date !== dateKey) {
+                                          moveTaskToDate(movingTask.id, dateKey);
+                                        }
+                                        return;
+                                      }
+                                      toggleTaskComplete(task.id, e);
+                                    }}
+                                    title="클릭: 완료 체크 · 드래그 또는 길게 누르기: 다른 날짜로 이동"
+                                    className={`group/item flex items-start justify-between gap-1 px-1.5 py-1 rounded-md border text-[10.5px] sm:text-[11px] leading-snug cursor-grab active:cursor-grabbing select-none transition-all ${
+                                      isBeingMoved
+                                        ? 'ring-2 ring-indigo-600 bg-indigo-100 border-indigo-500 scale-[1.02] shadow-md opacity-90'
+                                        : isHighlighted
                                         ? 'ring-2 ring-amber-400 bg-amber-50 border-amber-300 text-slate-900'
                                         : task.completed
                                         ? 'bg-slate-50/90 border-slate-200/80 text-slate-400'
@@ -2258,33 +2446,28 @@ function App() {
                                       </span>
 
                                       <div className="min-w-0 flex-1 break-words whitespace-normal">
-                                        {/* 1줄: 분류 배지 + 굵은 제목 */}
-                                        <div className="leading-snug">
+                                        <div>
                                           <span
-                                            className={`inline-block mr-1 text-[9px] sm:text-[9.5px] font-extrabold px-1 rounded align-baseline ${
+                                            className={`inline-block mr-1 text-[9px] sm:text-[9.5px] font-extrabold px-1 rounded ${
                                               task.completed
                                                 ? 'bg-slate-200 text-slate-500'
-                                                : 'bg-white/90 text-slate-700'
+                                                : 'bg-white/85 text-slate-700'
                                             }`}
                                           >
                                             {cat.label}
                                           </span>
                                           <span
-                                            className={`font-extrabold ${
+                                            className={`font-bold ${
                                               task.completed ? 'line-through text-slate-400' : ''
                                             }`}
                                           >
                                             {task.title}
                                           </span>
                                         </div>
-
-                                        {/* 2줄: 세부 내용이 있는 경우에만 구분선과 함께 표시 */}
-                                        {hasContent && (
+                                        {task.content && (
                                           <div
-                                            className={`mt-1 pt-1 border-t text-[10px] sm:text-[10.5px] leading-relaxed whitespace-pre-wrap break-words ${
-                                              task.completed
-                                                ? 'border-slate-200 text-slate-400 line-through'
-                                                : 'border-black/10 text-slate-700/90'
+                                            className={`mt-0.5 pt-0.5 border-t border-current/15 text-[9.5px] sm:text-[10px] leading-tight whitespace-pre-line ${
+                                              task.completed ? 'line-through text-slate-400' : 'opacity-85'
                                             }`}
                                           >
                                             {task.content}
@@ -2410,7 +2593,7 @@ function App() {
                   </button>
                 </div>
                 <p className="hidden sm:block text-[11px] text-slate-500">
-                  전체 연도(2020~2040) 통합 업무 캘린더 · 제목/내용 분리 기록 · 구글 계정 클라우드 자동 동기화 · 영업일/요일별 일괄 등록
+                  전체 연도(2020~2040) 통합 업무 캘린더 · 제목/내용 분리 작성 · 카드 길게 누르기/드래그 날짜 이동 · 구글 계정 클라우드 동기화
                 </p>
               </div>
             </div>
@@ -2682,6 +2865,25 @@ function App() {
             )}
 
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+              {/* 길게 누르기 / 드래그 이동 중 배너 */}
+              {movingTask && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] sm:text-xs font-extrabold shadow-xs animate-pulse">
+                  <Icon name="move" className="w-3.5 h-3.5 shrink-0" />
+                  <span className="max-w-[180px] sm:max-w-[240px] truncate">
+                    이동 대상: "{movingTask.title}" (날짜 칸 터치)
+                  </span>
+                  <button
+                    onClick={() => {
+                      setMovingTask(null);
+                      setDragOverDateKey(null);
+                    }}
+                    className="ml-0.5 px-1.5 py-0.2 rounded bg-white/20 hover:bg-white/30 text-[10px]"
+                  >
+                    취소
+                  </button>
+                </div>
+              )}
+
               {clipboardTasks.length > 0 && (
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] sm:text-xs font-bold shadow-xs">
                   <Icon name="clipboard" className="w-3.5 h-3.5 shrink-0" />
@@ -2710,7 +2912,7 @@ function App() {
                     setSearchQuery(e.target.value);
                     setIsSearchDrawerOpen(true);
                   }}
-                  placeholder="제목·내용 키워드 검색 후 복사..."
+                  placeholder="제목·내용 검색 후 복사..."
                   className="pl-8 pr-16 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg w-full sm:w-56 focus:outline-none focus:bg-white focus:border-indigo-500"
                 />
                 <button
@@ -2736,7 +2938,7 @@ function App() {
                     <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
                       {searchResults.length === 0 ? (
                         <div className="py-8 text-center text-xs text-slate-400">
-                          제목이나 내용에 일치하는 업무가 없습니다.
+                          일치하는 업무가 없습니다.
                         </div>
                       ) : (
                         searchResults.map((t) => {
@@ -2744,7 +2946,7 @@ function App() {
                           return (
                             <div
                               key={t.id}
-                              className="p-2.5 hover:bg-slate-50 flex items-start justify-between gap-2 text-xs"
+                              className="p-2.5 hover:bg-slate-50 flex items-center justify-between gap-2 text-xs"
                             >
                               <div
                                 onClick={() => {
@@ -2761,9 +2963,9 @@ function App() {
                                     {cat.label}
                                   </span>
                                 </div>
-                                <div className="font-extrabold text-slate-800 break-words">{t.title}</div>
+                                <div className="font-bold text-slate-800 break-words">{t.title}</div>
                                 {t.content && (
-                                  <div className="mt-0.5 text-[11px] text-slate-500 whitespace-pre-wrap break-words line-clamp-2">
+                                  <div className="text-[11px] text-slate-500 mt-0.5 break-words whitespace-pre-line">
                                     {t.content}
                                   </div>
                                 )}
@@ -3110,7 +3312,7 @@ function App() {
                 </button>
               </div>
 
-              {/* Step 1: 반복 업무 템플릿 (제목 + 내용 분리 지원) */}
+              {/* Step 1: 반복 업무 템플릿 (제목 + 내용 분리) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-extrabold text-slate-700">
@@ -3130,7 +3332,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="space-y-1.5 max-h-[240px] overflow-y-auto custom-scrollbar pr-1">
+                <div className="space-y-1.5 max-h-[225px] overflow-y-auto custom-scrollbar pr-1">
                   {templates.map((tpl) => {
                     const cat = getCategoryInfo(tpl.category);
                     const checked = selectedTemplateIds.includes(tpl.id);
@@ -3140,7 +3342,7 @@ function App() {
                       return (
                         <div
                           key={tpl.id}
-                          className="p-2.5 rounded-xl border border-indigo-400 bg-indigo-50/60 space-y-1.5"
+                          className="p-2 rounded-xl border border-indigo-400 bg-indigo-50/60 space-y-1.5"
                         >
                           <div className="flex items-center gap-1">
                             <select
@@ -3163,12 +3365,12 @@ function App() {
                               autoFocus
                             />
                           </div>
-                          <textarea
-                            rows={2}
+                          <input
+                            type="text"
                             value={editingTplContent}
                             onChange={(e) => setEditingTplContent(e.target.value)}
-                            placeholder="반복 업무 세부 내용 (선택)..."
-                            className="w-full px-2 py-1 text-[11px] border border-slate-300 rounded-md bg-white focus:outline-none focus:border-indigo-500"
+                            placeholder="세부 내용/메모 (선택)..."
+                            className="w-full px-2 py-1 text-[11px] border border-slate-300 rounded-md bg-white"
                           />
                           <div className="flex justify-end gap-1">
                             <button
@@ -3212,14 +3414,14 @@ function App() {
                             {checked && <Icon name="check" className="w-3 h-3" />}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1 flex-wrap">
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${cat.bg} ${cat.text}`}>
                                 {cat.label}
                               </span>
                               <span className="font-bold break-words">{tpl.title}</span>
                             </div>
                             {tpl.content && (
-                              <div className="mt-1 text-[10.5px] text-slate-500 whitespace-pre-wrap break-words leading-snug">
+                              <div className="text-[10.5px] text-slate-500 mt-0.5 break-words whitespace-pre-line">
                                 {tpl.content}
                               </div>
                             )}
@@ -3230,7 +3432,7 @@ function App() {
                           <button
                             onClick={(e) => startEditTemplate(tpl, e)}
                             className="p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-700"
-                            title="템플릿 제목·내용 수정"
+                            title="템플릿 수정"
                           >
                             <Icon name="edit" className="w-3 h-3" />
                           </button>
@@ -3247,8 +3449,7 @@ function App() {
                   })}
                 </div>
 
-                {/* 새 반복 업무 템플릿 추가 폼 (제목 + 내용 분리) */}
-                <form onSubmit={handleAddTemplate} className="pt-1.5 space-y-1.5 border-t border-slate-100">
+                <form onSubmit={handleAddTemplate} className="pt-1 space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <select
                       value={newTplCategory}
@@ -3276,17 +3477,17 @@ function App() {
                       <Icon name="plus" className="w-4 h-4" />
                     </button>
                   </div>
-                  <textarea
-                    rows={2}
+                  <input
+                    type="text"
                     value={newTplContent}
                     onChange={(e) => setNewTplContent(e.target.value)}
-                    placeholder="반복 업무 세부 내용 (선택 입력)..."
-                    className="w-full px-2.5 py-1.5 text-[11px] border border-slate-200 rounded-lg bg-slate-50/70 focus:bg-white focus:outline-none focus:border-indigo-500"
+                    placeholder="반복 업무 세부 내용 (선택)..."
+                    className="w-full px-2.5 py-1 text-[11px] border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-indigo-500"
                   />
                 </form>
               </div>
 
-              {/* Step 2: 영업일 기준 매월 지정 */}
+              {/* Step 2: 영업일 기준 매월 지정 (1이 안 지워지는 버그 수정 완료) */}
               <div className="space-y-2.5 pt-3 border-t border-slate-100">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-extrabold text-indigo-950">
@@ -3384,11 +3585,26 @@ function App() {
                       min={1}
                       max={31}
                       value={businessTargetDay}
-                      onFocus={() => setBusinessDayMode('nth_day')}
+                      onFocus={(e) => {
+                        setBusinessDayMode('nth_day');
+                        e.target.select();
+                      }}
                       onChange={(e) => {
                         setBusinessDayMode('nth_day');
-                        const val = Math.max(1, Math.min(31, Number(e.target.value) || 1));
-                        setBusinessTargetDay(val);
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setBusinessTargetDay('');
+                          return;
+                        }
+                        const num = Number(raw);
+                        if (!Number.isNaN(num)) {
+                          setBusinessTargetDay(Math.min(31, Math.max(0, num)));
+                        }
+                      }}
+                      onBlur={() => {
+                        const num = Number(businessTargetDay);
+                        if (!num || num < 1) setBusinessTargetDay(1);
+                        else if (num > 31) setBusinessTargetDay(31);
                       }}
                       className="w-16 px-2 py-1 text-xs font-extrabold text-center border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-indigo-500"
                     />
@@ -3631,7 +3847,7 @@ function App() {
         )}
       </div>
 
-      {/* ==================== 모달 1: 날짜별 업무 (제목·내용 분리 입력/수정) 및 연차/공휴일 관리 ==================== */}
+      {/* ==================== 모달 1: 날짜별 업무(제목/내용 분리) 및 연차/공휴일 관리 ==================== */}
       {modalDate && (
         <div
           onClick={() => {
@@ -3644,7 +3860,7 @@ function App() {
             onClick={(e) => e.stopPropagation()}
             className="bg-white rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]"
           >
-            <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
@@ -3679,7 +3895,7 @@ function App() {
               </button>
             </div>
 
-            <div className="px-4 py-3 bg-teal-50/75 border-b border-teal-200/80 space-y-2 shrink-0">
+            <div className="px-4 py-3 bg-teal-50/75 border-b border-teal-200/80 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-extrabold text-teal-950">
                   🌴 연차 · 반차 지정 (사용 개수 자동 카운트)
@@ -3760,7 +3976,7 @@ function App() {
               )}
             </div>
 
-            <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-200/80 flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-200/80 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
                 <span className="text-xs font-extrabold text-rose-700 shrink-0">🇰🇷 공휴일/휴무:</span>
                 <input
@@ -3791,8 +4007,8 @@ function App() {
               </div>
             </div>
 
-            {/* 할일 제목 + 내용 분리 등록 폼 */}
-            <form onSubmit={handleModalTaskAdd} className="p-4 border-b border-slate-200 space-y-2.5 shrink-0">
+            {/* 제목과 세부 내용을 분리하여 입력하는 폼 */}
+            <form onSubmit={handleModalTaskAdd} className="p-4 border-b border-slate-200 space-y-2.5">
               <div className="flex flex-wrap items-center gap-1.5">
                 {categories.map((cat) => {
                   const style = getCategoryInfo(cat.id);
@@ -3814,32 +4030,33 @@ function App() {
                 })}
               </div>
 
-              <div className="space-y-1.5">
-                <div>
-                  <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
-                    할일 제목 <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={modalTaskTitle}
-                    onChange={(e) => setModalTaskTitle(e.target.value)}
-                    placeholder="할일 제목을 입력하세요 (예: 월말 결산 및 세금계산서 마감)"
-                    className="w-full px-3 py-2 text-xs sm:text-sm font-bold border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="block text-[11px] font-extrabold text-slate-700">
+                  할일 제목 <span className="text-rose-500">*</span>
+                  <span className="font-normal text-slate-400 ml-1">
+                    (줄바꿈으로 여러 건 일괄 등록 가능 · &quot;제목 | 내용&quot; 형식 지원)
+                  </span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={modalTitleInput}
+                  onChange={(e) => setModalTitleInput(e.target.value)}
+                  placeholder="예: 부가세 신고 자료 취합"
+                  className="w-full px-3 py-2 text-xs sm:text-sm font-bold border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+                />
+              </div>
 
-                <div>
-                  <label className="block text-[11px] font-extrabold text-slate-600 mb-1">
-                    세부 내용 / 메모 <span className="text-slate-400 font-normal">(선택 · 줄바꿈 가능)</span>
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={modalTaskContent}
-                    onChange={(e) => setModalTaskContent(e.target.value)}
-                    placeholder="세부 내용, 담당자, 참고사항, 체크리스트 등을 자유롭게 적어주세요."
-                    className="w-full px-3 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="block text-[11px] font-extrabold text-slate-700">
+                  세부 내용 / 메모 <span className="font-normal text-slate-400">(선택 입력)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={modalContentInput}
+                  onChange={(e) => setModalContentInput(e.target.value)}
+                  placeholder="세부 진행사항, 담당자, 참고 메모 등을 자유롭게 적어주세요..."
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -3873,7 +4090,7 @@ function App() {
               </div>
             </form>
 
-            {/* 등록된 업무 목록 (제목 + 내용 표시 및 분리 수정) */}
+            {/* 등록된 업무 목록 (제목 + 내용 분리 표시 & 수정) */}
             <div className="p-4 overflow-y-auto space-y-2 flex-1 bg-slate-50/50">
               {(tasksByDate[modalDate] || []).length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400">등록된 업무가 없습니다.</div>
@@ -3889,7 +4106,7 @@ function App() {
                     >
                       {isEditing ? (
                         <div className="flex-1 space-y-2">
-                          <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex items-center gap-1.5">
                             <select
                               value={editingTaskCategory}
                               onChange={(e) => setEditingTaskCategory(e.target.value)}
@@ -3911,11 +4128,11 @@ function App() {
                             />
                           </div>
                           <textarea
-                            rows={3}
+                            rows={2}
                             value={editingTaskContent}
                             onChange={(e) => setEditingTaskContent(e.target.value)}
-                            placeholder="세부 내용 (선택)..."
-                            className="w-full px-2.5 py-1.5 text-xs border border-indigo-300 rounded-lg bg-slate-50/70 focus:bg-white focus:outline-none"
+                            placeholder="세부 내용/메모 (선택)..."
+                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-indigo-400"
                           />
                           <div className="flex justify-end gap-1.5">
                             <button
@@ -3928,7 +4145,7 @@ function App() {
                             <button
                               type="button"
                               onClick={() => setEditingTaskId(null)}
-                              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold"
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs"
                             >
                               취소
                             </button>
@@ -3955,7 +4172,7 @@ function App() {
                                   {cat.label}
                                 </span>
                                 <span
-                                  className={`text-xs sm:text-sm font-extrabold break-words ${
+                                  className={`text-xs sm:text-sm font-bold break-words ${
                                     task.completed ? 'line-through text-slate-400' : 'text-slate-900'
                                   }`}
                                 >
@@ -3964,8 +4181,8 @@ function App() {
                               </div>
                               {task.content && (
                                 <div
-                                  className={`mt-1 pt-1 border-t border-slate-100 text-xs leading-relaxed whitespace-pre-wrap break-words ${
-                                    task.completed ? 'line-through text-slate-400' : 'text-slate-600'
+                                  className={`mt-1 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 whitespace-pre-line break-words ${
+                                    task.completed ? 'line-through text-slate-400' : ''
                                   }`}
                                 >
                                   {task.content}
@@ -3978,7 +4195,7 @@ function App() {
                             <button
                               onClick={(e) => copySingleTaskToClipboard(task, e)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-                              title="복사 (제목·내용 포함)"
+                              title="복사"
                             >
                               <Icon name="copy" className="w-3.5 h-3.5" />
                             </button>
@@ -4034,12 +4251,10 @@ function App() {
             </div>
 
             <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs space-y-1">
-              <div className="text-indigo-600 font-bold">복사할 업무 (제목·내용 함께 복사)</div>
+              <div className="text-indigo-600 font-bold">복사할 업무</div>
               <div className="text-sm font-extrabold text-slate-900">{copyTargetTask.title}</div>
               {copyTargetTask.content && (
-                <div className="pt-1 border-t border-indigo-200/70 text-xs text-slate-700 whitespace-pre-wrap break-words">
-                  {copyTargetTask.content}
-                </div>
+                <div className="text-xs text-slate-600 whitespace-pre-line">{copyTargetTask.content}</div>
               )}
             </div>
 
